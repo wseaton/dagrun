@@ -1,0 +1,48 @@
+# SSH + Service integration test
+# Tests running a managed service on a remote host via SSH
+
+# configure target host (update this for your environment)
+ssh_host := 192.168.12.9
+
+# remote managed service - starts an HTTP server on the remote host
+# uses forward=true to tunnel the health check through SSH
+# @ssh {{ssh_host}} workdir=/tmp
+# @service ready=http://localhost:18888/ forward=true startup_timeout=30s
+remote-http-server:
+    python3 -m http.server 18888
+
+# task that depends on the remote service
+# the service will be started on the remote host before this runs
+# uses DAGRUN_SVC_* env vars which point to the tunneled endpoint
+use-remote-service: service:remote-http-server
+    echo "Service URL: $DAGRUN_SVC_REMOTE_HTTP_SERVER_URL"
+    curl -s $DAGRUN_SVC_REMOTE_HTTP_SERVER_URL
+    echo "Successfully connected to remote service via tunnel!"
+
+# external service check on remote host (we don't start it, just verify it's running)
+# this also auto-forwards since the check targets localhost
+# @ssh {{ssh_host}}
+# @extern ready=tcp:localhost:22 startup_timeout=5s
+remote-ssh-check:
+
+# task that waits for the external check
+verify-remote-ssh: service:remote-ssh-check
+    echo "Remote host SSH is accessible via tunnel at port $DAGRUN_SVC_REMOTE_SSH_CHECK_PORT"
+
+# combo test: local task -> remote service -> local consumer
+local-setup:
+    echo "Setting up locally..."
+
+# remote service with upload (common pattern)
+# auto-forwards since check targets localhost
+# @ssh {{ssh_host}}
+# @upload ./test-script.sh:/tmp/test-script.sh
+# @service ready=tcp:localhost:19999 startup_timeout=15s
+remote-custom-service:
+    chmod +x /tmp/test-script.sh
+    /tmp/test-script.sh
+
+# use the custom service - uses tunneled endpoint from env var
+test-custom: local-setup service:remote-custom-service
+    echo "Custom service is running at $DAGRUN_SVC_REMOTE_CUSTOM_SERVICE_HOST:$DAGRUN_SVC_REMOTE_CUSTOM_SERVICE_PORT"
+    nc -z $DAGRUN_SVC_REMOTE_CUSTOM_SERVICE_HOST $DAGRUN_SVC_REMOTE_CUSTOM_SERVICE_PORT && echo "Port reachable via tunnel!"

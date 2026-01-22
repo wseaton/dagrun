@@ -1,0 +1,41 @@
+# SSH remote execution test
+
+# local task
+local-prep:
+    echo "preparing locally..."
+    echo "data to send"
+
+# remote task on 192.168.12.9
+# @ssh 192.168.12.9
+remote-hostname:
+    hostname
+    uname -a
+
+# remote with piped input (stdin piping to remote)
+# @ssh 192.168.12.9
+# @pipe_from local-prep
+remote-process: local-prep
+    cat | tr 'a-z' 'A-Z'
+
+# remote with workdir
+# @ssh 192.168.12.9 workdir=/tmp
+remote-ls:
+    ls -la
+    pwd
+
+# remote with file upload
+# @ssh 192.168.12.9
+# @upload ./build.sh:/tmp/build.sh
+remote-with-upload:
+    chmod +x /tmp/build.sh
+    /tmp/build.sh
+
+# remote with file download
+# @ssh 192.168.12.9
+# @download /tmp/results.txt:./downloaded-results.txt
+remote-with-download:
+    echo "results from remote" > /tmp/results.txt
+
+# chain local and remote
+final: remote-hostname remote-ls
+    echo "All remote tasks completed!"

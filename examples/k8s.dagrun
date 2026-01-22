@@ -1,0 +1,99 @@
+# Kubernetes executor examples
+# Supports three modes: job (ephemeral), exec (existing pods), apply (manifests)
+
+# =============================================================================
+# JOB MODE - ephemeral jobs that run to completion
+# =============================================================================
+
+# simple job with resource limits
+# @k8s job image=python:3.11 namespace=default
+# @k8s cpu=1 memory=512Mi
+# @timeout 5m
+run-python:
+    python -c "print('hello from k8s!')"
+
+# job with configmap mounted
+# @k8s job image=alpine:3 namespace=ml-jobs
+# @k8s-configmap my-config:/etc/config
+read-config:
+    cat /etc/config/settings.yaml
+
+# job with secret and service account
+# @k8s job image=alpine:3 namespace=prod
+# @k8s-secret db-creds:/secrets
+# @k8s service_account=job-runner
+run-with-secret:
+    cat /secrets/password
+
+# job with node selector and tolerations (for GPU nodes)
+# @k8s job image=nvidia/cuda:12.0-base namespace=ml-jobs
+# @k8s cpu=4 memory=16Gi
+# @k8s node_selector=accelerator:nvidia-a100
+# @k8s toleration=nvidia.com/gpu
+# @timeout 2h
+gpu-training:
+    python train.py
+
+# =============================================================================
+# APPLY MODE - apply manifests and wait for resources
+# =============================================================================
+
+# apply manifest folder and wait for deployment
+# @k8s apply path=./manifests/redis namespace=test-env
+# @k8s wait=deployment/redis-master timeout=5m
+setup-redis:
+
+# apply with multiple wait targets
+# @k8s apply path=./manifests/app namespace=staging
+# @k8s wait=deployment/api,deployment/worker,statefulset/db timeout=10m
+setup-app:
+
+# =============================================================================
+# EXEC MODE - run commands in existing pods
+# =============================================================================
+
+# exec by pod selector
+# @k8s exec namespace=prod selector=app=api container=main
+run-migration:
+    python manage.py migrate
+
+# exec into specific pod
+# @k8s exec namespace=prod pod=api-server-abc123
+check-health:
+    curl localhost:8080/health
+
+# exec with file upload/download (kubectl cp)
+# @k8s exec namespace=prod selector=app=api
+# @k8s-upload ./local-script.py:/tmp/script.py
+# @k8s-download /tmp/results.json:./results.json
+run-script-in-pod:
+    python /tmp/script.py > /tmp/results.json
+
+# exec with port forwarding (runs kubectl port-forward in background)
+# @k8s exec namespace=prod selector=app=api
+# @k8s-forward 5432:svc/postgres:5432
+# @k8s-forward 6379:redis-pod:6379
+run-with-services:
+    python test_connections.py
+
+# =============================================================================
+# HYBRID WORKFLOWS - mix local, SSH, and K8s tasks
+# =============================================================================
+
+# build on SSH node with special tooling
+# @ssh builder@10.14.217.13
+build-image:
+    docker build -t registry.io/app:latest . && docker push registry.io/app:latest
+
+# deploy to k8s
+# @k8s apply path=./manifests/app namespace=staging
+# @k8s wait=deployment/app timeout=5m
+deploy-app: build-image
+
+# run benchmark job
+# @k8s job image=registry.io/test:latest namespace=staging
+# @k8s cpu=2 memory=4Gi
+# @k8s-configmap bench-config:/etc/config
+# @timeout 1h
+run-benchmark: deploy-app
+    python benchmark.py --config /etc/config/params.yaml

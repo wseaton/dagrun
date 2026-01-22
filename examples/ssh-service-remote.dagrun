@@ -1,0 +1,21 @@
+# SSH + Service integration test
+# Run with: cargo run -- -c ssh-service-localhost-test.justflow run test-all
+
+ssh_host := 192.168.12.9
+
+# remote managed service via SSH
+# starts Python HTTP server that persists (unlike nc -l which exits after one connection)
+# @ssh {{ssh_host}} workdir=/tmp
+# @service ready=http://{{ssh_host}}:18765/ startup_timeout=15s interval=500ms
+remote-http-service:
+    python3 -m http.server 18765
+
+# task that uses the remote service
+use-http-service: service:remote-http-service
+    echo "HTTP service is running on remote host!"
+    curl -s http://{{ssh_host}}:18765/ | head -5
+    echo "Successfully fetched from remote service!"
+
+# run everything
+test-all: use-http-service
+    echo "Integration test passed!"
