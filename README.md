@@ -1,8 +1,13 @@
 # dagrun
 
-> What if you took make/just and airflow/dagster and combined them together? 
+> What if you took make/just and airflow/dagster and combined them together?
 
 A DAG-based task runner with SSH remote execution, Kubernetes integration, piped data flow, and Lua scripting.
+
+## Status
+> [!WARNING]
+The API of `dagrun` is very much not stable, syntax might change in the near future!
+
 
 ## Why dagrun?
 
