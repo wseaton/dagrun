@@ -5,12 +5,16 @@
 //! - ephemeral Job creation with completion waiting
 //! - kubectl apply for manifest folders with cleanup
 
+use colored::Colorize;
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use crate::progress::task_color;
 
 use k8s_openapi::api::batch::v1::Job;
 use k8s_openapi::api::core::v1::{
@@ -382,8 +386,14 @@ pub async fn run_job(
         .unwrap_or_default();
 
     // print logs
+    let is_tty = std::io::stdout().is_terminal();
+    let color = task_color(task_name);
     for line in logs.lines() {
-        println!("[{}] {}", task_name, line);
+        if is_tty {
+            println!("  {} {}", format!("[{}]", task_name).color(color), line);
+        } else {
+            println!("{}", line);
+        }
     }
 
     // check result
@@ -751,8 +761,14 @@ pub async fn exec_in_pod(
     let output = cmd.output().await?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let is_tty = std::io::stdout().is_terminal();
+    let color = task_color(task_name);
     for line in stdout.lines() {
-        println!("[{}] {}", task_name, line);
+        if is_tty {
+            println!("  {} {}", format!("[{}]", task_name).color(color), line);
+        } else {
+            println!("{}", line);
+        }
     }
 
     let success = output.status.success();

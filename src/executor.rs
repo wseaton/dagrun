@@ -1,15 +1,19 @@
 #![allow(dead_code)]
 
+use colored::Colorize;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
+
+use crate::progress::task_color;
 
 use crate::dag::TaskGraph;
 use crate::k8s::{self, ResourceTracker};
@@ -334,11 +338,24 @@ async fn execute_with_retry(
     let mut output = String::new();
 
     for attempt in 1..=max_attempts {
-        info!(task = %task.name, attempt, max_attempts, "running task");
+        info!(
+            task = %task.name,
+            progress = "start",
+            attempt,
+            max_attempts,
+            "running task"
+        );
 
+        let start = Instant::now();
         match execute_once(task, stdin_data, ssh_sessions, service_env, k8s_tracker).await {
             Ok(task_output) => {
-                info!(task = %task.name, "task succeeded");
+                let duration_ms = start.elapsed().as_millis() as u64;
+                info!(
+                    task = %task.name,
+                    progress = "done",
+                    duration_ms,
+                    "task succeeded"
+                );
                 return TaskResult {
                     task_name: task.name.clone(),
                     status: TaskStatus::Success,
@@ -349,9 +366,21 @@ async fn execute_with_retry(
             Err(e) => {
                 output = format!("{}", e);
                 if attempt < max_attempts {
-                    warn!(task = %task.name, attempt, error = %e, "task failed, retrying");
+                    warn!(
+                        task = %task.name,
+                        progress = "retry",
+                        attempt,
+                        error = %e,
+                        "task failed, retrying"
+                    );
                 } else {
-                    error!(task = %task.name, attempts = max_attempts, error = %e, "task failed permanently");
+                    error!(
+                        task = %task.name,
+                        progress = "failed",
+                        attempts = max_attempts,
+                        error = %e,
+                        "task failed permanently"
+                    );
                 }
             }
         }
@@ -486,13 +515,21 @@ async fn execute_once(
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
 
+        let stdout_is_tty = std::io::stdout().is_terminal();
+        let stderr_is_tty = std::io::stderr().is_terminal();
+
         let task_name = task.name.clone();
+        let color = task_color(&task_name);
         let stdout_handle = tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             let mut collected = String::new();
             while let Ok(Some(line)) = lines.next_line().await {
-                println!("[{}] {}", task_name, line);
+                if stdout_is_tty {
+                    println!("  {} {}", format!("[{}]", task_name).color(color), line);
+                } else {
+                    println!("{}", line);
+                }
                 collected.push_str(&line);
                 collected.push('\n');
             }
@@ -500,11 +537,16 @@ async fn execute_once(
         });
 
         let task_name = task.name.clone();
+        let color = task_color(&task_name);
         let stderr_handle = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("[{}] {}", task_name, line);
+                if stderr_is_tty {
+                    eprintln!("  {} {}", format!("[{}]", task_name).color(color), line);
+                } else {
+                    eprintln!("{}", line);
+                }
             }
         });
 

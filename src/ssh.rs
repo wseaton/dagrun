@@ -3,9 +3,11 @@
 //! Execute tasks on remote hosts via SSH using the openssh crate.
 
 use bytes::BytesMut;
+use colored::Colorize;
 use openssh::{ForwardType, KnownHosts, Session, SessionBuilder, Socket, Stdio};
 use openssh_sftp_client::Sftp;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +15,8 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tracing::info;
+
+use crate::progress::task_color;
 
 use dagrun_ast::SshConfig;
 
@@ -115,29 +119,49 @@ pub async fn execute_remote(
     let stdout_handle = child.stdout().take();
     let stderr_handle = child.stderr().take();
 
-    let task_name_stdout = task_name.to_string();
-    let task_name_stderr = task_name.to_string();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let stderr_is_tty = std::io::stderr().is_terminal();
 
+    let task_name_stdout = task_name.to_string();
+    let color = task_color(task_name);
     let stdout_task = tokio::spawn(async move {
         let mut lines_collected = Vec::new();
         if let Some(stdout) = stdout_handle {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                println!("[{}] {}", task_name_stdout, line);
+                if stdout_is_tty {
+                    println!(
+                        "  {} {}",
+                        format!("[{}]", task_name_stdout).color(color),
+                        line
+                    );
+                } else {
+                    println!("{}", line);
+                }
                 lines_collected.push(line);
             }
         }
         lines_collected.join("\n")
     });
 
+    let task_name_stderr = task_name.to_string();
+    let color = task_color(task_name);
     let stderr_task = tokio::spawn(async move {
         let mut lines_collected = Vec::new();
         if let Some(stderr) = stderr_handle {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("[{}] {}", task_name_stderr, line);
+                if stderr_is_tty {
+                    eprintln!(
+                        "  {} {}",
+                        format!("[{}]", task_name_stderr).color(color),
+                        line
+                    );
+                } else {
+                    eprintln!("{}", line);
+                }
                 lines_collected.push(line);
             }
         }
@@ -171,6 +195,9 @@ pub fn spawn_streaming_command(
 ) -> tokio::task::JoinHandle<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
+    let is_tty = std::io::stdout().is_terminal();
+    let color = task_color(&task_name);
+
     tokio::spawn(async move {
         let mut cmd = session.command("sh");
         cmd.arg("-c").arg(&command);
@@ -187,7 +214,11 @@ pub fn spawn_streaming_command(
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                println!("[service:{}] {}", task_name, line);
+                if is_tty {
+                    println!("  {} {}", format!("[{}]", task_name).color(color), line);
+                } else {
+                    println!("{}", line);
+                }
             }
         }
         let _ = child.wait().await;

@@ -4,6 +4,7 @@ mod executor;
 mod justfile;
 mod k8s;
 mod lua;
+mod progress;
 mod service;
 mod ssh;
 
@@ -11,8 +12,9 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
-use tracing::Level;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 use crate::dag::TaskGraph;
 use crate::executor::{Executor, TaskStatus};
@@ -99,6 +101,14 @@ struct Cli {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
+    /// Enable verbose debug logging
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
+    /// Suppress status output, only show task output
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -146,11 +156,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(Level::INFO.into()))
-        .init();
-
     let cli = Cli::parse();
+
+    setup_tracing(cli.verbose, cli.quiet);
 
     let config_path = cli.config.unwrap_or_else(find_config_file);
     let config = load_config(&config_path)?;
@@ -338,6 +346,34 @@ fn bind_task_parameters(task: &Task, args: &[String]) -> anyhow::Result<Task> {
         run,
         ..task.clone()
     })
+}
+
+fn setup_tracing(verbose: bool, quiet: bool) {
+    use crate::progress::PrettyProgressLayer;
+
+    if quiet {
+        // no output at all from tracing
+        return;
+    }
+
+    let progress_layer = PrettyProgressLayer::new();
+
+    if verbose {
+        // add standard fmt layer for debug output
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_level(true);
+        let filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("dagrun=debug"));
+
+        tracing_subscriber::registry()
+            .with(progress_layer)
+            .with(fmt_layer.with_filter(filter))
+            .init();
+    } else {
+        // just pretty progress, filter out non-progress events
+        tracing_subscriber::registry().with(progress_layer).init();
+    }
 }
 
 fn print_results(results: &[executor::TaskResult]) {
