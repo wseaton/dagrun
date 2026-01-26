@@ -5,6 +5,7 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
+#[allow(deprecated)]
 fn dagrun_cmd() -> Command {
     Command::cargo_bin("dagrun").unwrap()
 }

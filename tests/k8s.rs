@@ -11,6 +11,7 @@ use std::fs;
 use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
+#[allow(deprecated)]
 fn dagrun_cmd() -> Command {
     Command::cargo_bin("dagrun").unwrap()
 }
@@ -22,7 +23,9 @@ fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
 }
 
 fn k8s_tests_enabled() -> bool {
-    std::env::var("DAGRUN_K8S_TESTS").map(|v| v == "1").unwrap_or(false)
+    std::env::var("DAGRUN_K8S_TESTS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn kind_cluster_exists() -> bool {
@@ -32,7 +35,6 @@ fn kind_cluster_exists() -> bool {
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("dagrun-test"))
         .unwrap_or(false)
 }
-
 
 fn ensure_namespace(ns: &str) {
     let _ = StdCommand::new("kubectl")
@@ -49,7 +51,14 @@ fn cleanup_namespace(ns: &str) {
 /// create a configmap for testing
 fn create_configmap(ns: &str, name: &str, data: &str) {
     let _ = StdCommand::new("kubectl")
-        .args(["-n", ns, "create", "configmap", name, &format!("--from-literal=config.yaml={}", data)])
+        .args([
+            "-n",
+            ns,
+            "create",
+            "configmap",
+            name,
+            &format!("--from-literal=config.yaml={}", data),
+        ])
         .output();
 }
 
@@ -75,14 +84,25 @@ spec:
         .spawn()
         .and_then(|mut child| {
             use std::io::Write;
-            child.stdin.as_mut().unwrap().write_all(manifest.as_bytes())?;
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(manifest.as_bytes())?;
             child.wait()
         });
 
     if result.is_ok() {
         // wait for pod to be ready
         let _ = StdCommand::new("kubectl")
-            .args(["-n", ns, "wait", "--for=condition=Ready", "pod/test-pod", "--timeout=60s"])
+            .args([
+                "-n",
+                ns,
+                "wait",
+                "--for=condition=Ready",
+                "pod/test-pod",
+                "--timeout=60s",
+            ])
             .output();
         true
     } else {
@@ -496,7 +516,15 @@ apply_config:
 
     // verify configmap exists
     let cm_check = StdCommand::new("kubectl")
-        .args(["-n", ns, "get", "configmap", "applied-config", "-o", "jsonpath={.data.key}"])
+        .args([
+            "-n",
+            ns,
+            "get",
+            "configmap",
+            "applied-config",
+            "-o",
+            "jsonpath={.data.key}",
+        ])
         .output();
 
     cleanup_namespace(ns);

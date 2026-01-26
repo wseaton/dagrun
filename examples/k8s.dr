@@ -81,7 +81,7 @@ run-with-services:
 # =============================================================================
 
 # build on SSH node with special tooling
-# @ssh builder@10.14.217.13
+# @ssh builder@10.10.1.1
 build-image:
     docker build -t registry.io/app:latest . && docker push registry.io/app:latest
 

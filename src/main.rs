@@ -1,4 +1,3 @@
-mod config;
 mod dag;
 mod env;
 mod executor;
@@ -15,11 +14,11 @@ use std::process::Command as StdCommand;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
-use crate::config::{Config, Task};
 use crate::dag::TaskGraph;
 use crate::executor::{Executor, TaskStatus};
 use crate::justfile::load_justflow;
 use crate::lua::load_lua_config;
+use dagrun_ast::{Config, Task};
 use serde::Serialize;
 
 /// JSON output for `list --format json`
@@ -56,10 +55,7 @@ fn is_zero(n: &u32) -> bool {
 
 impl JustflowExtras {
     fn is_empty(&self) -> bool {
-        self.pipe_from.is_empty()
-            && self.timeout.is_none()
-            && self.retry == 0
-            && !self.join
+        self.pipe_from.is_empty() && self.timeout.is_none() && self.retry == 0 && !self.join
     }
 }
 
@@ -85,7 +81,9 @@ impl TaskInfo {
             depends_on: task.depends_on.clone(),
             justflow: JustflowExtras {
                 pipe_from: task.pipe_from.clone(),
-                timeout: task.timeout.map(|d| humantime::format_duration(d).to_string()),
+                timeout: task
+                    .timeout
+                    .map(|d| humantime::format_duration(d).to_string()),
                 retry: task.retry,
                 join: task.join,
             },
@@ -200,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
                 let output = ListOutput::from_graph(&graph);
                 println!("{}", serde_json::to_string_pretty(&output).unwrap());
             }
-            "text" | _ => {
+            _ => {
                 println!("{}", "Tasks:".bold());
                 for name in graph.task_names() {
                     let task = graph.task(name).unwrap();
@@ -212,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
                     println!("  {} {}{}", "•".cyan(), name, deps.dimmed());
                 }
             }
-        }
+        },
 
         Commands::Graph { format, output } => match format.as_str() {
             "ascii" => {
@@ -253,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn find_config_file() -> PathBuf {
-    for name in ["dagrun", "dagrun.lua"] {
+    for name in ["dagrun", "dagrun.dr", "dagrun.lua"] {
         let path = PathBuf::from(name);
         if path.exists() {
             return path;
@@ -268,12 +266,12 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 
     match ext {
         "lua" => load_lua_config(path).map_err(|e| anyhow::anyhow!("{}", e)),
-        "dagrun" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
+        "dr" | "dagrun" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
         _ if filename == "dagrun" || ext.is_empty() => {
             load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e))
         }
         _ => anyhow::bail!(
-            "Unknown config format: {}. Use dagrun or .lua",
+            "Unknown config format: {}. Use .dr, .dagrun, or .lua",
             path.display()
         ),
     }

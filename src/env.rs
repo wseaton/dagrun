@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::{info, warn};
 
-use crate::config::{DotenvSettings, ReadinessCheck, ServiceKind};
+use dagrun_ast::{DotenvSettings, ReadinessCheck, ServiceKind};
 
 /// Load environment variables from dotenv files
 pub fn load_dotenv(settings: &DotenvSettings) -> Result<(), String> {
@@ -67,15 +67,15 @@ pub fn service_env_vars(
             vars.insert(format!("{}_PORT", prefix), local_port.to_string());
 
             // rewrite URL if it's an HTTP check (strip path for base URL)
-            if let ReadinessCheck::Http { url } = ready {
-                if let Ok(mut parsed) = url::Url::parse(url) {
-                    let _ = parsed.set_host(Some("127.0.0.1"));
-                    let _ = parsed.set_port(Some(local_port));
-                    parsed.set_path("");
-                    let base = parsed.to_string().trim_end_matches('/').to_string();
-                    vars.insert(format!("{}_URL", prefix), base.clone());
-                    vars.insert(format!("{}_BASE_URL", prefix), base);
-                }
+            if let ReadinessCheck::Http { url } = ready
+                && let Ok(mut parsed) = url::Url::parse(url)
+            {
+                let _ = parsed.set_host(Some("127.0.0.1"));
+                let _ = parsed.set_port(Some(local_port));
+                parsed.set_path("");
+                let base = parsed.to_string().trim_end_matches('/').to_string();
+                vars.insert(format!("{}_URL", prefix), base.clone());
+                vars.insert(format!("{}_BASE_URL", prefix), base);
             }
         } else {
             // no tunnel, use the original values
@@ -104,10 +104,22 @@ mod tests {
         };
         let vars = service_env_vars("api-server", &ServiceKind::Managed, Some(&ready), None);
 
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_HOST"), Some(&"localhost".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_PORT"), Some(&"8080".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_URL"), Some(&"http://localhost:8080".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_READY"), Some(&"1".to_string()));
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_HOST"),
+            Some(&"localhost".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_PORT"),
+            Some(&"8080".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_URL"),
+            Some(&"http://localhost:8080".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_READY"),
+            Some(&"1".to_string())
+        );
     }
 
     #[test]
@@ -118,9 +130,18 @@ mod tests {
         };
         let vars = service_env_vars("postgres", &ServiceKind::External, Some(&ready), None);
 
-        assert_eq!(vars.get("DAGRUN_SVC_POSTGRES_HOST"), Some(&"localhost".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_POSTGRES_PORT"), Some(&"5432".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_POSTGRES_KIND"), Some(&"external".to_string()));
+        assert_eq!(
+            vars.get("DAGRUN_SVC_POSTGRES_HOST"),
+            Some(&"localhost".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_POSTGRES_PORT"),
+            Some(&"5432".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_POSTGRES_KIND"),
+            Some(&"external".to_string())
+        );
     }
 
     #[test]
@@ -128,13 +149,30 @@ mod tests {
         let ready = ReadinessCheck::Http {
             url: "http://localhost:8080/health".to_string(),
         };
-        let vars = service_env_vars("api-server", &ServiceKind::Managed, Some(&ready), Some(54321));
+        let vars = service_env_vars(
+            "api-server",
+            &ServiceKind::Managed,
+            Some(&ready),
+            Some(54321),
+        );
 
         // when forwarded, should use the local tunnel endpoint with path stripped
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_HOST"), Some(&"127.0.0.1".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_PORT"), Some(&"54321".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_URL"), Some(&"http://127.0.0.1:54321".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_API_SERVER_BASE_URL"), Some(&"http://127.0.0.1:54321".to_string()));
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_HOST"),
+            Some(&"127.0.0.1".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_PORT"),
+            Some(&"54321".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_URL"),
+            Some(&"http://127.0.0.1:54321".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_API_SERVER_BASE_URL"),
+            Some(&"http://127.0.0.1:54321".to_string())
+        );
     }
 
     #[test]
@@ -145,7 +183,13 @@ mod tests {
         let vars = service_env_vars("web-api", &ServiceKind::Managed, Some(&ready), None);
 
         // _URL and _BASE_URL should both be base URL (no path)
-        assert_eq!(vars.get("DAGRUN_SVC_WEB_API_URL"), Some(&"http://localhost:8080".to_string()));
-        assert_eq!(vars.get("DAGRUN_SVC_WEB_API_BASE_URL"), Some(&"http://localhost:8080".to_string()));
+        assert_eq!(
+            vars.get("DAGRUN_SVC_WEB_API_URL"),
+            Some(&"http://localhost:8080".to_string())
+        );
+        assert_eq!(
+            vars.get("DAGRUN_SVC_WEB_API_BASE_URL"),
+            Some(&"http://localhost:8080".to_string())
+        );
     }
 }

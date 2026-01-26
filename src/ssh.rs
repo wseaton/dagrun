@@ -14,7 +14,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::config::SshConfig;
+use dagrun_ast::SshConfig;
 
 /// Cache of SSH sessions for connection reuse
 pub type SessionCache = Arc<RwLock<HashMap<String, Arc<Session>>>>;
@@ -74,7 +74,7 @@ pub async fn get_session(
     Ok(session)
 }
 
-/// Execute a command on a remote host
+/// Execute a command on a remote host with streaming output
 pub async fn execute_remote(
     session: &Session,
     task_name: &str,
@@ -82,6 +82,8 @@ pub async fn execute_remote(
     workdir: Option<&str>,
     stdin_data: Option<&str>,
 ) -> Result<RemoteOutput, openssh::Error> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
     let full_command = match workdir {
         Some(dir) => format!("cd {} && {}", dir, command),
         None => command.to_string(),
@@ -109,26 +111,47 @@ pub async fn execute_remote(
         drop(stdin);
     }
 
-    let output = child.wait_with_output().await?;
+    // stream stdout and stderr in real-time
+    let stdout_handle = child.stdout().take();
+    let stderr_handle = child.stderr().take();
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let task_name_stdout = task_name.to_string();
+    let task_name_stderr = task_name.to_string();
 
-    if !stdout.is_empty() {
-        for line in stdout.lines() {
-            println!("[{}] {}", task_name, line);
+    let stdout_task = tokio::spawn(async move {
+        let mut lines_collected = Vec::new();
+        if let Some(stdout) = stdout_handle {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                println!("[{}] {}", task_name_stdout, line);
+                lines_collected.push(line);
+            }
         }
-    }
-    if !stderr.is_empty() {
-        for line in stderr.lines() {
-            eprintln!("[{}] {}", task_name, line);
+        lines_collected.join("\n")
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut lines_collected = Vec::new();
+        if let Some(stderr) = stderr_handle {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[{}] {}", task_name_stderr, line);
+                lines_collected.push(line);
+            }
         }
-    }
+        lines_collected.join("\n")
+    });
+
+    let status = child.wait().await?;
+    let stdout = stdout_task.await.unwrap_or_default();
+    let stderr = stderr_task.await.unwrap_or_default();
 
     Ok(RemoteOutput {
         stdout,
         stderr,
-        success: output.status.success(),
+        success: status.success(),
     })
 }
 

@@ -1,0 +1,109 @@
+# dagrun-lsp test file
+# each section demonstrates a specific diagnostic or feature
+# run the LSP against this file to verify all diagnostics fire correctly
+
+# ============================================================================
+# VARIABLES
+# ============================================================================
+
+host := example.com
+port := 8080
+unused_var := this_is_never_used
+
+# expected diagnostics:
+#   - unused_var: "unused variable 'unused_var'" (warning)
+#   - port: "unused variable 'port'" (warning)
+
+# ============================================================================
+# UNDEFINED VARIABLE
+# ============================================================================
+
+test_undefined_var:
+  echo "deploying to {{host}}:{{undefined_var}}"
+
+# expected diagnostics:
+#   - undefined_var: "undefined variable 'undefined_var'" (error)
+
+# ============================================================================
+# UNDEFINED TASK DEPENDENCY
+# ============================================================================
+
+build:
+  echo "building"
+  cargo build
+
+test_undefined_task: build missing_task
+  echo "this depends on a missing task"
+
+# expected diagnostics:
+#   - missing_task: "undefined task 'missing_task'" (error)
+
+# ============================================================================
+# DEPENDENCY CYCLE
+# ============================================================================
+
+cycle_a: cycle_b
+  echo "a"
+
+cycle_b: cycle_a
+  echo "b"
+
+# expected diagnostics:
+#   - cycle_a or cycle_b: "dependency cycle detected: cycle_a -> cycle_b -> cycle_a" (error)
+
+# ============================================================================
+# FILE NOT FOUND (@upload)
+# ============================================================================
+
+#@ssh user@host
+#@upload ./nonexistent_file.txt:/tmp/file.txt
+test_upload:
+  echo "testing upload"
+
+# expected diagnostics:
+#   - ./nonexistent_file.txt: "file not found: ./nonexistent_file.txt" (warning)
+
+# ============================================================================
+# INTERPRETER NOT FOUND (shebang)
+# ============================================================================
+
+test_shebang:
+  #!/nonexistent_interpreter
+  echo "testing shebang"
+
+# expected diagnostics:
+#   - /nonexistent_interpreter: "interpreter not found: /nonexistent_interpreter" (warning)
+
+# ============================================================================
+# COMMAND NOT IN PATH
+# ============================================================================
+
+test_missing_cmd:
+  definitely_not_a_real_command --help
+
+# expected diagnostics:
+#   - definitely_not_a_real_command: "command not found in PATH: definitely_not_a_real_command" (warning)
+
+# ============================================================================
+# VALID TASK (no diagnostics)
+# ============================================================================
+
+valid_task: build
+  echo "host is {{host}}"
+  ls -la
+
+# expected diagnostics: none
+
+# ============================================================================
+# LUA BLOCK
+# ============================================================================
+
+@lua
+for i = 1, 2 do
+    task("lua-worker-" .. i, {
+        run = "echo 'lua worker " .. i .. "'"
+    })
+end
+@end
+
+# expected diagnostics: none (lua block should parse correctly)

@@ -11,16 +11,15 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
-use crate::config::{FileTransfer, Shebang, Task};
 use crate::dag::TaskGraph;
 use crate::k8s::{self, ResourceTracker};
 use crate::service::ServiceManager;
 use crate::ssh::{self, SessionCache};
+use dagrun_ast::{FileTransfer, Shebang, SshConfig, Task};
 use glob::glob;
 use shell_escape::escape;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use tempfile;
 
 #[derive(Error, Debug)]
 pub enum ExecutorError {
@@ -83,10 +82,10 @@ impl Executor {
     /// Register all services from the graph
     pub async fn register_services(&self) {
         for name in self.graph.task_names() {
-            if let Some(task) = self.graph.task(name) {
-                if task.service.is_some() {
-                    self.services.register(task).await;
-                }
+            if let Some(task) = self.graph.task(name)
+                && task.service.is_some()
+            {
+                self.services.register(task).await;
             }
         }
     }
@@ -150,7 +149,14 @@ impl Executor {
                 }
             } else {
                 let stdin_data = self.collect_pipe_inputs(task).await;
-                execute_with_retry(task, stdin_data.as_deref(), &self.ssh_sessions, &service_env, &self.k8s_tracker).await
+                execute_with_retry(
+                    task,
+                    stdin_data.as_deref(),
+                    &self.ssh_sessions,
+                    &service_env,
+                    &self.k8s_tracker,
+                )
+                .await
             };
 
             // release service dependencies
@@ -208,7 +214,14 @@ impl Executor {
                         }
                     } else {
                         let stdin_data = collect_pipe_inputs_from_store(&task, &outputs).await;
-                        execute_with_retry(&task, stdin_data.as_deref(), &ssh_sessions, &service_env, &k8s_tracker).await
+                        execute_with_retry(
+                            &task,
+                            stdin_data.as_deref(),
+                            &ssh_sessions,
+                            &service_env,
+                            &k8s_tracker,
+                        )
+                        .await
                     };
 
                     // release service dependencies
@@ -240,7 +253,14 @@ impl Executor {
 
     pub async fn execute_single(&self, task: &Task) -> TaskResult {
         let stdin_data = self.collect_pipe_inputs(task).await;
-        execute_with_retry(task, stdin_data.as_deref(), &self.ssh_sessions, &HashMap::new(), &self.k8s_tracker).await
+        execute_with_retry(
+            task,
+            stdin_data.as_deref(),
+            &self.ssh_sessions,
+            &HashMap::new(),
+            &self.k8s_tracker,
+        )
+        .await
     }
 }
 
@@ -331,9 +351,16 @@ async fn execute_once(
             cmd.to_string()
         };
 
-        let result = k8s::execute(k8s_config, &task.name, &cmd, stdin_data, task.timeout, k8s_tracker)
-            .await
-            .map_err(|e| ExecutorError::K8s(e.to_string()))?;
+        let result = k8s::execute(
+            k8s_config,
+            &task.name,
+            &cmd,
+            stdin_data,
+            task.timeout,
+            k8s_tracker,
+        )
+        .await
+        .map_err(|e| ExecutorError::K8s(e.to_string()))?;
 
         if result.success {
             return Ok(result.stdout);
@@ -351,7 +378,15 @@ async fn execute_once(
         } else {
             cmd.to_string()
         };
-        return execute_remote(task, &cmd, stdin_data, ssh_config, ssh_sessions, service_env).await;
+        return execute_remote(
+            task,
+            &cmd,
+            stdin_data,
+            ssh_config,
+            ssh_sessions,
+            service_env,
+        )
+        .await;
     }
 
     let cmd = task.run.as_ref().unwrap();
@@ -460,7 +495,7 @@ async fn execute_remote(
     task: &Task,
     cmd: &str,
     stdin_data: Option<&str>,
-    ssh_config: &crate::config::SshConfig,
+    ssh_config: &SshConfig,
     ssh_sessions: &SessionCache,
     service_env: &HashMap<String, String>,
 ) -> Result<String, ExecutorError> {
@@ -494,9 +529,15 @@ async fn execute_remote(
         format!("{} && {}", exports.join(" && "), cmd)
     };
 
-    let result = ssh::execute_remote(&session, &task.name, &cmd_with_env, ssh_config.workdir.as_deref(), stdin_data)
-        .await
-        .map_err(|e| ExecutorError::Ssh(e.to_string()))?;
+    let result = ssh::execute_remote(
+        &session,
+        &task.name,
+        &cmd_with_env,
+        ssh_config.workdir.as_deref(),
+        stdin_data,
+    )
+    .await
+    .map_err(|e| ExecutorError::Ssh(e.to_string()))?;
 
     // download files after command execution (only on success)
     if result.success {

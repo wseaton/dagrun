@@ -36,7 +36,7 @@ use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::config::{Config, K8sConfig, K8sMode, Task};
+use dagrun_ast::{Config, DotenvSettings, K8sConfig, K8sMode, Shebang, SshConfig, Task};
 
 #[derive(Error, Debug)]
 pub enum LuaConfigError {
@@ -81,11 +81,14 @@ pub fn parse_lua_config(content: &str) -> Result<Config, LuaConfigError> {
     // now we can unwrap - clone the data out instead of try_unwrap
     let tasks = tasks_ref.lock().unwrap().clone();
 
-    Ok(Config { tasks, dotenv: crate::config::DotenvSettings::default() })
+    Ok(Config {
+        tasks,
+        dotenv: DotenvSettings::default(),
+    })
 }
 
-fn parse_ssh_config(opts: &Table) -> LuaResult<crate::config::SshConfig> {
-    Ok(crate::config::SshConfig {
+fn parse_ssh_config(opts: &Table) -> LuaResult<SshConfig> {
+    Ok(SshConfig {
         host: opts.get("host").unwrap_or_default(),
         user: opts.get("user").ok(),
         port: opts.get("port").ok(),
@@ -107,10 +110,8 @@ fn parse_k8s_config(opts: &Table) -> LuaResult<K8sConfig> {
     // parse node selector from table
     let node_selector = if let Ok(sel_table) = opts.get::<Table>("node_selector") {
         let mut map = std::collections::HashMap::new();
-        for pair in sel_table.pairs::<String, String>() {
-            if let Ok((k, v)) = pair {
-                map.insert(k, v);
-            }
+        for (k, v) in sel_table.pairs::<String, String>().flatten() {
+            map.insert(k, v);
         }
         if map.is_empty() { None } else { Some(map) }
     } else {
@@ -132,7 +133,9 @@ fn parse_k8s_config(opts: &Table) -> LuaResult<K8sConfig> {
     Ok(K8sConfig {
         mode,
         context: opts.get("context").ok(),
-        namespace: opts.get("namespace").unwrap_or_else(|_| "default".to_string()),
+        namespace: opts
+            .get("namespace")
+            .unwrap_or_else(|_| "default".to_string()),
         selector: opts.get("selector").ok(),
         pod: opts.get("pod").ok(),
         container: opts.get("container").ok(),
@@ -175,7 +178,7 @@ fn parse_task_table(name: &str, opts: &Table) -> LuaResult<Task> {
         Some(parse_ssh_config(&ssh_table)?)
     } else if let Ok(host) = opts.get::<String>("ssh") {
         // shorthand: ssh = "hostname"
-        Some(crate::config::SshConfig {
+        Some(SshConfig {
             host,
             ..Default::default()
         })
@@ -191,9 +194,9 @@ fn parse_task_table(name: &str, opts: &Table) -> LuaResult<Task> {
     };
 
     // parse shebang from run if present
-    let shebang = run.as_ref().and_then(|r| {
-        r.lines().next().and_then(crate::config::Shebang::parse)
-    });
+    let shebang = run
+        .as_ref()
+        .and_then(|r| r.lines().next().and_then(Shebang::parse));
 
     Ok(Task {
         name: name.to_string(),
@@ -208,6 +211,7 @@ fn parse_task_table(name: &str, opts: &Table) -> LuaResult<Task> {
         k8s,
         service: None,
         shebang,
+        span: None,
     })
 }
 
@@ -322,7 +326,7 @@ mod tests {
 
         let config = parse_lua_config(lua).unwrap();
         let k8s = config.tasks["train"].k8s.as_ref().unwrap();
-        assert_eq!(k8s.mode, crate::config::K8sMode::Job);
+        assert_eq!(k8s.mode, K8sMode::Job);
         assert_eq!(k8s.image, Some("python:3.11".to_string()));
         assert_eq!(k8s.namespace, "ml-jobs");
         assert_eq!(k8s.cpu, Some("2".to_string()));
@@ -344,7 +348,7 @@ mod tests {
 
         let config = parse_lua_config(lua).unwrap();
         let k8s = config.tasks["migrate"].k8s.as_ref().unwrap();
-        assert_eq!(k8s.mode, crate::config::K8sMode::Exec);
+        assert_eq!(k8s.mode, K8sMode::Exec);
         assert_eq!(k8s.selector, Some("app=api".to_string()));
     }
 
@@ -370,7 +374,7 @@ mod tests {
         for i in 1..=3 {
             let name = format!("worker-{}", i);
             let k8s = config.tasks[&name].k8s.as_ref().unwrap();
-            assert_eq!(k8s.mode, crate::config::K8sMode::Job);
+            assert_eq!(k8s.mode, K8sMode::Job);
             assert_eq!(k8s.image, Some("python:3.11".to_string()));
         }
     }

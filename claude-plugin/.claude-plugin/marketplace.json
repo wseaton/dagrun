@@ -1,0 +1,29 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "justflow-plugins",
+  "description": "Plugins for justflow/dagrun",
+  "owner": {
+    "name": "weaton",
+    "email": "weaton@example.com"
+  },
+  "plugins": [
+    {
+      "name": "dagrun-lsp",
+      "version": "0.1.0",
+      "description": "Language server for dagrun (.dr) task runner files",
+      "author": {
+        "name": "weaton"
+      },
+      "source": "./plugins/dagrun-lsp",
+      "lspServers": {
+        "dagrun": {
+          "command": "dagrun-lsp",
+          "extensionToLanguage": {
+            ".dr": "dagrun",
+            ".dagrun": "dagrun"
+          }
+        }
+      }
+    }
+  ]
+}
