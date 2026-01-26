@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_annotations() {
-        let config = parse_justflow("# @timeout 5m\n# @retry 2\nbuild:\n\tcargo build").unwrap();
+        let config = parse_justflow("@timeout 5m\n@retry 2\nbuild:\n\tcargo build").unwrap();
         let task = config.tasks.get("build").unwrap();
         assert!(task.timeout.is_some());
         assert_eq!(task.retry, 2);
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_ssh_annotation() {
         let config =
-            parse_justflow("# @ssh host.example.com user=deploy\nremote:\n\techo hi").unwrap();
+            parse_justflow("@ssh host.example.com user=deploy\nremote:\n\techo hi").unwrap();
         let task = config.tasks.get("remote").unwrap();
         assert!(task.ssh.is_some());
         let ssh = task.ssh.as_ref().unwrap();
@@ -90,14 +90,14 @@ mod tests {
 
     #[test]
     fn test_join_node() {
-        let config = parse_justflow("# @join\ncollect: a b").unwrap();
+        let config = parse_justflow("@join\ncollect: a b").unwrap();
         let task = config.tasks.get("collect").unwrap();
         assert!(task.join);
     }
 
     #[test]
     fn test_pipe_from() {
-        let config = parse_justflow("# @pipe_from a, b\ntransform: a b\n\tcat").unwrap();
+        let config = parse_justflow("@pipe_from a, b\ntransform: a b\n\tcat").unwrap();
         let task = config.tasks.get("transform").unwrap();
         assert_eq!(task.pipe_from, vec!["a", "b"]);
     }
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn test_file_transfers() {
         let config = parse_justflow(
-            "# @ssh host\n# @upload ./local.txt:/remote.txt\n# @download /remote.txt:./local.txt\nremote:\n\techo hi",
+            "@ssh host\n@upload ./local.txt:/remote.txt\n@download /remote.txt:./local.txt\nremote:\n\techo hi",
         )
         .unwrap();
         let task = config.tasks.get("remote").unwrap();
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_service_managed() {
         let config = parse_justflow(
-            "# @service ready=http://localhost:8080/health startup_timeout=30s\nweb:\n\t./server",
+            "@service ready=http://localhost:8080/health startup_timeout=30s\nweb:\n\t./server",
         )
         .unwrap();
         let task = config.tasks.get("web").unwrap();
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_service_external() {
-        let config = parse_justflow("# @extern ready=tcp:localhost:5432\ndb:").unwrap();
+        let config = parse_justflow("@extern ready=tcp:localhost:5432\ndb:").unwrap();
         let task = config.tasks.get("db").unwrap();
         assert!(task.service.is_some());
         assert_eq!(

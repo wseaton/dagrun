@@ -16,8 +16,8 @@ test: build
     cargo test
 
 # with timeout and retry
-# @timeout 2m
-# @retry 1
+@timeout 2m
+@retry 1
 lint: build
     cargo clippy
 
@@ -29,17 +29,17 @@ gen-b:
     echo "data from B"
 
 # piped transformation
-# @pipe_from gen-a, gen-b
+@pipe_from gen-a, gen-b
 transform: gen-a gen-b
     tr 'a-z' 'A-Z'
 
 # join node
-# @join
-# @pipe_from transform, gen-a
+@join
+@pipe_from transform, gen-a
 collect: transform gen-a
 
 # final consumer
-# @pipe_from collect
+@pipe_from collect
 report: collect
     wc -l
 

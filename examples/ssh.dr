@@ -7,33 +7,33 @@ local-prep:
     echo "data to send"
 
 # remote task on 10.10.0.1
-# @ssh {{ssh_host}}
+@ssh {{ssh_host}}
 remote-hostname:
     hostname
     uname -a
 
 # remote with piped input (stdin piping to remote)
-# @ssh {{ssh_host}}
-# @pipe_from local-prep
+@ssh {{ssh_host}}
+@pipe_from local-prep
 remote-process: local-prep
     cat | tr 'a-z' 'A-Z'
 
 # remote with workdir
-# @ssh {{ssh_host}} workdir=/tmp
+@ssh {{ssh_host}} workdir=/tmp
 remote-ls:
     ls -la
     pwd
 
 # remote with file upload
-# @ssh {{ssh_host}}
-# @upload ./build.sh:/tmp/build.sh
+@ssh {{ssh_host}}
+@upload ./build.sh:/tmp/build.sh
 remote-with-upload:
     chmod +x /tmp/build.sh
     /tmp/build.sh
 
 # remote with file download
-# @ssh {{ssh_host}}
-# @download /tmp/results.txt:./downloaded-results.txt
+@ssh {{ssh_host}}
+@download /tmp/results.txt:./downloaded-results.txt
 remote-with-download:
     echo "results from remote" > /tmp/results.txt
 

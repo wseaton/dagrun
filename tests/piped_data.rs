@@ -25,7 +25,7 @@ fn test_single_pipe_from() {
 gen:
     echo "hello"
 
-# @pipe_from gen
+@pipe_from gen
 transform: gen
     tr 'a-z' 'A-Z'
 "#,
@@ -53,7 +53,7 @@ gen_a:
 gen_b:
     echo "bbb"
 
-# @pipe_from gen_a, gen_b
+@pipe_from gen_a, gen_b
 combine: gen_a gen_b
     cat
 "#,
@@ -79,11 +79,11 @@ fn test_pipe_chain() {
 source:
     echo "test data"
 
-# @pipe_from source
+@pipe_from source
 upper: source
     tr 'a-z' 'A-Z'
 
-# @pipe_from upper
+@pipe_from upper
 count: upper
     wc -c
 "#,
@@ -113,11 +113,11 @@ worker_2:
 worker_3:
     echo "result 3"
 
-# @join
-# @pipe_from worker_1, worker_2, worker_3
+@join
+@pipe_from worker_1, worker_2, worker_3
 collect: worker_1 worker_2 worker_3
 
-# @pipe_from collect
+@pipe_from collect
 final: collect
     wc -l
 "#,
@@ -143,7 +143,7 @@ gen:
     echo "line 2"
     echo "line 3"
 
-# @pipe_from gen
+@pipe_from gen
 count: gen
     wc -l
 "#,
@@ -168,11 +168,11 @@ fn test_pipe_preserves_data() {
 gen:
     printf "exact data"
 
-# @pipe_from gen
+@pipe_from gen
 passthrough: gen
     cat
 
-# @pipe_from passthrough
+@pipe_from passthrough
 verify: passthrough
     cat
 "#,

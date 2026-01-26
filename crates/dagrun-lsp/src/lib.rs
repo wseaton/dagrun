@@ -372,12 +372,6 @@ fn collect_semantic_tokens(source: &str, ast: &SourceFile) -> Vec<RawToken> {
             Item::Task(task) => {
                 // annotations
                 for ann in &task.annotations {
-                    // # token
-                    tokens.push(RawToken {
-                        span: ann.node.hash_span,
-                        token_type: 2, // DECORATOR
-                        modifiers: 0,
-                    });
                     // @ token
                     tokens.push(RawToken {
                         span: ann.node.at_span,
@@ -835,16 +829,12 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
         }
     }
 
-    // context: after # @ - complete annotation keywords or options
+    // context: after @ - complete annotation keywords or options
     let trimmed = before_cursor.trim_start();
-    if trimmed.starts_with("# @") || trimmed.starts_with("#@") {
+    if trimmed.starts_with('@') {
         use dagrun_ast::docs;
 
-        let after_at = if trimmed.starts_with("# @") {
-            &trimmed[3..]
-        } else {
-            &trimmed[2..]
-        };
+        let after_at = &trimmed[1..];
 
         // if no space yet, complete annotation keywords
         if !after_at.contains(' ') {

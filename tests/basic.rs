@@ -127,7 +127,7 @@ fn test_task_timeout() {
     let config = create_dagrun_file(
         &dir,
         r#"
-# @timeout 1s
+@timeout 1s
 slow:
     sleep 10
 "#,
@@ -151,7 +151,7 @@ fn test_task_retry() {
         &dir,
         &format!(
             r#"
-# @retry 2
+@retry 2
 flaky:
     if [ -f "{}" ]; then echo "success"; else touch "{}"; exit 1; fi
 "#,

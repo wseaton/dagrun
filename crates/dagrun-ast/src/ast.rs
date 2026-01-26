@@ -162,8 +162,6 @@ pub struct Interpolation {
 
 #[derive(Debug, Clone)]
 pub struct Annotation {
-    /// The `#` prefix span
-    pub hash_span: Span,
     /// The `@` symbol span
     pub at_span: Span,
     /// Annotation kind and data

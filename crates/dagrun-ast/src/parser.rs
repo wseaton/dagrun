@@ -70,19 +70,10 @@ impl<'a> Parser<'a> {
         let tok = self.peek();
 
         match &tok.kind {
-            // comment or annotation line
+            // comment line (not annotation - those start with @)
             TokenKind::Hash => {
                 let start = tok.span;
                 self.advance();
-                self.skip_whitespace();
-
-                // check for @annotation
-                if self.check(TokenKind::At) {
-                    let ann = self.parse_annotation(start)?;
-                    pending_annotations.push(ann);
-                    self.skip_to_newline();
-                    return Ok(None);
-                }
 
                 // regular comment
                 let text = self.consume_to_newline();
@@ -144,18 +135,23 @@ impl<'a> Parser<'a> {
             }
 
             TokenKind::At => {
-                // @lua block at line start
+                // annotation or @lua block at line start
                 let at_span = tok.span;
                 self.advance();
-                if let TokenKind::Identifier(name) = &self.peek().kind
-                    && name == "lua"
-                {
-                    return self.parse_lua_block(at_span, pending_annotations);
+                if let TokenKind::Identifier(name) = &self.peek().kind {
+                    if name == "lua" {
+                        return self.parse_lua_block(at_span, pending_annotations);
+                    }
+                    // regular annotation
+                    let ann = self.parse_annotation(at_span)?;
+                    pending_annotations.push(ann);
+                    self.skip_to_newline();
+                    return Ok(None);
                 }
                 Err(ParseError::new(
                     ParseErrorKind::InvalidAnnotation,
                     at_span,
-                    "unexpected '@' at line start",
+                    "expected annotation name after '@'",
                 ))
             }
 
@@ -177,8 +173,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_annotation(&mut self, hash_span: Span) -> Result<Spanned<Annotation>, ParseError> {
-        let at_span = self.expect(TokenKind::At)?.span;
+    fn parse_annotation(&mut self, at_span: Span) -> Result<Spanned<Annotation>, ParseError> {
         self.skip_whitespace();
 
         let name_tok = self.advance();
@@ -198,16 +193,9 @@ impl<'a> Parser<'a> {
         let kind = self.parse_annotation_kind(&name, name_span)?;
 
         let end_span = self.prev_span();
-        let full_span = hash_span.merge(end_span);
+        let full_span = at_span.merge(end_span);
 
-        Ok(Spanned::new(
-            Annotation {
-                hash_span,
-                at_span,
-                kind,
-            },
-            full_span,
-        ))
+        Ok(Spanned::new(Annotation { at_span, kind }, full_span))
     }
 
     fn parse_annotation_kind(
@@ -1292,7 +1280,7 @@ mod tests {
 
     #[test]
     fn parse_annotation() {
-        let (file, errors) = parse("# @timeout 5m\nbuild:\n\tcargo build");
+        let (file, errors) = parse("@timeout 5m\nbuild:\n\tcargo build");
         assert!(errors.is_empty());
 
         if let Item::Task(task) = &file.items[0].node {
@@ -1305,7 +1293,7 @@ mod tests {
 
     #[test]
     fn parse_ssh_annotation() {
-        let (file, errors) = parse("# @ssh host.example.com user=deploy\nremote:\n\techo hi");
+        let (file, errors) = parse("@ssh host.example.com user=deploy\nremote:\n\techo hi");
         assert!(errors.is_empty());
 
         if let Item::Task(task) = &file.items[0].node {

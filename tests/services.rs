@@ -33,7 +33,7 @@ fn test_managed_service_tcp_ready() {
         &dir,
         &format!(
             r#"
-# @service ready=tcp:127.0.0.1:{port} startup_timeout=10s interval=100ms log=quiet
+@service ready=tcp:127.0.0.1:{port} startup_timeout=10s interval=100ms log=quiet
 tcp_server:
     nc -l {port}
 
@@ -63,7 +63,7 @@ fn test_managed_service_http_ready() {
         &dir,
         &format!(
             r#"
-# @service ready=http://127.0.0.1:{port}/ startup_timeout=15s interval=100ms log=quiet
+@service ready=http://127.0.0.1:{port}/ startup_timeout=15s interval=100ms log=quiet
 http_server:
     python3 -m http.server {port}
 
@@ -96,7 +96,7 @@ fn test_managed_service_command_ready() {
         &dir,
         &format!(
             r#"
-# @service ready=cmd:"test -f {marker}" startup_timeout=10s interval=100ms log=quiet
+@service ready=cmd:"test -f {marker}" startup_timeout=10s interval=100ms log=quiet
 file_creator:
     touch {marker} && sleep 30
 
@@ -143,7 +143,7 @@ fn test_external_service() {
         &dir,
         &format!(
             r#"
-# @extern ready=tcp:127.0.0.1:{port} startup_timeout=5s interval=100ms
+@extern ready=tcp:127.0.0.1:{port} startup_timeout=5s interval=100ms
 external_svc:
 
 use_external: service:external_svc
@@ -177,7 +177,7 @@ fn test_service_timeout_fails() {
         &dir,
         &format!(
             r#"
-# @service ready=tcp:127.0.0.1:{port} startup_timeout=1s interval=100ms log=quiet
+@service ready=tcp:127.0.0.1:{port} startup_timeout=1s interval=100ms log=quiet
 never_ready:
     sleep 30
 
@@ -207,11 +207,11 @@ fn test_multiple_service_deps() {
         &dir,
         &format!(
             r#"
-# @service ready=tcp:127.0.0.1:{port1} startup_timeout=10s interval=100ms log=quiet
+@service ready=tcp:127.0.0.1:{port1} startup_timeout=10s interval=100ms log=quiet
 svc1:
     nc -l {port1}
 
-# @service ready=tcp:127.0.0.1:{port2} startup_timeout=10s interval=100ms log=quiet
+@service ready=tcp:127.0.0.1:{port2} startup_timeout=10s interval=100ms log=quiet
 svc2:
     nc -l {port2}
 
@@ -246,7 +246,7 @@ fn test_service_with_preflight() {
         &dir,
         &format!(
             r#"
-# @service ready=tcp:127.0.0.1:{port} startup_timeout=10s interval=100ms log=quiet preflight="test -f {marker}"
+@service ready=tcp:127.0.0.1:{port} startup_timeout=10s interval=100ms log=quiet preflight="test -f {marker}"
 with_preflight:
     nc -l {port}
 
@@ -282,7 +282,7 @@ fn test_service_preflight_fails() {
         &dir,
         &format!(
             r#"
-# @service ready=tcp:127.0.0.1:{port} startup_timeout=5s interval=100ms log=quiet preflight="test -f /nonexistent/file"
+@service ready=tcp:127.0.0.1:{port} startup_timeout=5s interval=100ms log=quiet preflight="test -f /nonexistent/file"
 bad_preflight:
     nc -l {port}
 

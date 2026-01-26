@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn test_service_annotation_parsing() {
         let source = r#"
-# @service ready=tcp:127.0.0.1:8080 startup_timeout=1s interval=100ms log=quiet
+@service ready=tcp:127.0.0.1:8080 startup_timeout=1s interval=100ms log=quiet
 my_service:
     sleep 30
 "#;
@@ -605,7 +605,7 @@ my_service:
     #[test]
     fn test_service_dependency_parsing() {
         let source = r#"
-# @service ready=tcp:127.0.0.1:8080
+@service ready=tcp:127.0.0.1:8080
 svc:
     sleep 30
 
@@ -620,7 +620,7 @@ use_svc: service:svc
     #[test]
     fn test_service_preflight_with_quotes() {
         let source = r#"
-# @service ready=tcp:127.0.0.1:8080 preflight="test -f /tmp/marker"
+@service ready=tcp:127.0.0.1:8080 preflight="test -f /tmp/marker"
 svc:
     sleep 30
 "#;
@@ -634,7 +634,7 @@ svc:
     #[test]
     fn test_command_readiness_with_quotes() {
         let source = r#"
-# @service ready=cmd:"test -f /tmp/marker" startup_timeout=10s interval=100ms log=quiet
+@service ready=cmd:"test -f /tmp/marker" startup_timeout=10s interval=100ms log=quiet
 svc:
     touch /tmp/marker && sleep 30
 "#;

@@ -6,8 +6,8 @@ ssh_host := 10.10.0.1
 
 # remote managed service - starts an HTTP server on the remote host
 # uses forward=true to tunnel the health check through SSH
-# @ssh {{ssh_host}} workdir=/tmp
-# @service ready=http://localhost:18888/ forward=true startup_timeout=30s
+@ssh {{ssh_host}} workdir=/tmp
+@service ready=http://localhost:18888/ forward=true startup_timeout=30s
 remote-http-server:
     python3 -m http.server 18888
 
@@ -21,8 +21,8 @@ use-remote-service: service:remote-http-server
 
 # external service check on remote host (we don't start it, just verify it's running)
 # this also auto-forwards since the check targets localhost
-# @ssh {{ssh_host}}
-# @extern ready=tcp:localhost:22 startup_timeout=5s
+@ssh {{ssh_host}}
+@extern ready=tcp:localhost:22 startup_timeout=5s
 remote-ssh-check:
 
 # task that waits for the external check
@@ -35,9 +35,9 @@ local-setup:
 
 # remote service with upload (common pattern)
 # auto-forwards since check targets localhost
-# @ssh {{ssh_host}}
-# @upload ./test-script.sh:/tmp/test-script.sh
-# @service ready=tcp:localhost:19999 startup_timeout=15s
+@ssh {{ssh_host}}
+@upload ./test-script.sh:/tmp/test-script.sh
+@service ready=tcp:localhost:19999 startup_timeout=15s
 remote-custom-service:
     chmod +x /tmp/test-script.sh
     /tmp/test-script.sh

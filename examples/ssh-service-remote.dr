@@ -5,8 +5,8 @@ ssh_host := 10.10.0.1
 
 # remote managed service via SSH
 # starts Python HTTP server that persists (unlike nc -l which exits after one connection)
-# @ssh {{ssh_host}} workdir=/tmp
-# @service ready=http://{{ssh_host}}:18765/ startup_timeout=15s interval=500ms
+@ssh {{ssh_host}} workdir=/tmp
+@service ready=http://{{ssh_host}}:18765/ startup_timeout=15s interval=500ms
 remote-http-service:
     python3 -m http.server 18765
 

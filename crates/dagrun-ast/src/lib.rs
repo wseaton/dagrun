@@ -9,7 +9,7 @@
 //! use dagrun_ast::parse_config;
 //!
 //! let source = r#"
-//! # @timeout 5m
+//! @timeout 5m
 //! build:
 //!     cargo build --release
 //! "#;

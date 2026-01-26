@@ -130,8 +130,8 @@ fn test_k8s_job_simple() {
         &dir,
         &format!(
             r#"
-# @k8s job image=alpine:3 namespace={ns}
-# @timeout 2m
+@k8s job image=alpine:3 namespace={ns}
+@timeout 2m
 hello:
     echo "hello from k8s job"
 "#,
@@ -169,9 +169,9 @@ fn test_k8s_job_with_resources() {
         &dir,
         &format!(
             r#"
-# @k8s job image=alpine:3 namespace={ns}
-# @k8s cpu=100m memory=64Mi
-# @timeout 2m
+@k8s job image=alpine:3 namespace={ns}
+@k8s cpu=100m memory=64Mi
+@timeout 2m
 with_resources:
     echo "job with resources" && cat /proc/meminfo | head -1
 "#,
@@ -210,9 +210,9 @@ fn test_k8s_job_with_configmap() {
         &dir,
         &format!(
             r#"
-# @k8s job image=alpine:3 namespace={ns}
-# @k8s-configmap test-config:/etc/config
-# @timeout 2m
+@k8s job image=alpine:3 namespace={ns}
+@k8s-configmap test-config:/etc/config
+@timeout 2m
 read_config:
     cat /etc/config/config.yaml
 "#,
@@ -250,8 +250,8 @@ fn test_k8s_job_failure() {
         &dir,
         &format!(
             r#"
-# @k8s job image=alpine:3 namespace={ns}
-# @timeout 1m
+@k8s job image=alpine:3 namespace={ns}
+@timeout 1m
 fail_job:
     exit 1
 "#,
@@ -296,8 +296,8 @@ fn test_k8s_exec_by_selector() {
         &dir,
         &format!(
             r#"
-# @k8s exec namespace={ns} selector=app=test
-# @timeout 1m
+@k8s exec namespace={ns} selector=app=test
+@timeout 1m
 exec_in_pod:
     echo "hello from exec"
 "#,
@@ -340,8 +340,8 @@ fn test_k8s_exec_by_pod_name() {
         &dir,
         &format!(
             r#"
-# @k8s exec namespace={ns} pod=test-pod
-# @timeout 1m
+@k8s exec namespace={ns} pod=test-pod
+@timeout 1m
 exec_named:
     hostname
 "#,
@@ -387,9 +387,9 @@ fn test_k8s_exec_with_upload() {
         &dir,
         &format!(
             r#"
-# @k8s exec namespace={ns} selector=app=test
-# @k8s-upload {script}:/tmp/script.sh
-# @timeout 1m
+@k8s exec namespace={ns} selector=app=test
+@k8s-upload {script}:/tmp/script.sh
+@timeout 1m
 upload_and_run:
     chmod +x /tmp/script.sh && /tmp/script.sh
 "#,
@@ -435,9 +435,9 @@ fn test_k8s_exec_with_download() {
         &dir,
         &format!(
             r#"
-# @k8s exec namespace={ns} selector=app=test
-# @k8s-download /tmp/result.txt:{output}
-# @timeout 1m
+@k8s exec namespace={ns} selector=app=test
+@k8s-download /tmp/result.txt:{output}
+@timeout 1m
 generate_and_download:
     echo "downloaded content" > /tmp/result.txt
 "#,
@@ -497,8 +497,8 @@ data:
         &dir,
         &format!(
             r#"
-# @k8s apply path={manifest} namespace={ns}
-# @timeout 1m
+@k8s apply path={manifest} namespace={ns}
+@timeout 1m
 apply_config:
 "#,
             manifest = manifest_dir.display(),
@@ -578,9 +578,9 @@ spec:
         &dir,
         &format!(
             r#"
-# @k8s apply path={manifest} namespace={ns}
-# @k8s wait=deployment/test-deploy timeout=2m
-# @timeout 3m
+@k8s apply path={manifest} namespace={ns}
+@k8s wait=deployment/test-deploy timeout=2m
+@timeout 3m
 deploy_with_wait:
 "#,
             manifest = manifest_dir.display(),
@@ -681,8 +681,8 @@ fn test_k8s_mixed_local_and_k8s() {
 local_build:
     echo "building locally"
 
-# @k8s job image=alpine:3 namespace={ns}
-# @timeout 2m
+@k8s job image=alpine:3 namespace={ns}
+@timeout 2m
 k8s_process: local_build
     echo "processing in k8s"
 

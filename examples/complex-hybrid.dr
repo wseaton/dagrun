@@ -8,21 +8,21 @@ lint:
     echo "Running linter"
 
 # SSH build tasks
-# @ssh builder@10.0.0.1
+@ssh builder@10.0.0.1
 build-backend: setup-env lint
     cargo build --release
 
-# @ssh builder@10.0.0.2
+@ssh builder@10.0.0.2
 build-frontend: setup-env lint
     npm run build
 
 # K8s infrastructure
-# @k8s apply path=./manifests/infra namespace=staging
-# @k8s wait=deployment/redis,deployment/postgres timeout=5m
+@k8s apply path=./manifests/infra namespace=staging
+@k8s wait=deployment/redis,deployment/postgres timeout=5m
 setup-infra: build-backend build-frontend
 
 # service dependency
-# @service ready=http://localhost:8080/health startup_timeout=30s
+@service ready=http://localhost:8080/health startup_timeout=30s
 api-server: setup-infra
     ./start-server.sh
 
@@ -45,13 +45,13 @@ end
 @end
 
 # join node to collect worker results
-# @join
-# @pipe_from worker-1, worker-2, worker-3, worker-4
+@join
+@pipe_from worker-1, worker-2, worker-3, worker-4
 collect-results: worker-1 worker-2 worker-3 worker-4
 
 # K8s exec for final processing
-# @k8s exec namespace=staging selector=app=processor
-# @k8s-upload ./results.json:/tmp/results.json
+@k8s exec namespace=staging selector=app=processor
+@k8s-upload ./results.json:/tmp/results.json
 finalize: collect-results api-server
     python finalize.py /tmp/results.json
 

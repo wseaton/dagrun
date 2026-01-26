@@ -272,12 +272,10 @@ mod tests {
 
     #[test]
     fn annotation() {
-        let tokens = lex("# @timeout 5m");
+        let tokens = lex("@timeout 5m");
         assert_eq!(
             tokens,
             vec![
-                TokenKind::Hash,
-                TokenKind::Whitespace,
                 TokenKind::At,
                 TokenKind::Identifier("timeout".to_string()),
                 TokenKind::Whitespace,

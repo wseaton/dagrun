@@ -43,8 +43,8 @@ build:
 test: build
     cargo test
 
-# @timeout 2m
-# @retry 1
+@timeout 2m
+@retry 1
 deploy: test
     ./deploy.sh
 ```
@@ -88,8 +88,8 @@ Shebang scripts work with SSH and Kubernetes execution too - the script is trans
 ## SSH Remote Execution
 
 ```bash
-# @ssh user@host workdir=/home/user/project
-# @upload ./local.sh:/tmp/remote.sh
+@ssh user@host workdir=/home/user/project
+@upload ./local.sh:/tmp/remote.sh
 remote-task:
     chmod +x /tmp/remote.sh && /tmp/remote.sh
 ```
@@ -100,27 +100,27 @@ Run tasks as ephemeral K8s jobs, exec into existing pods, or apply manifests:
 
 ```bash
 # ephemeral job
-# @k8s job image=python:3.11 namespace=ml-jobs
-# @k8s cpu=2 memory=4Gi
-# @k8s-configmap training-config:/etc/config
+@k8s job image=python:3.11 namespace=ml-jobs
+@k8s cpu=2 memory=4Gi
+@k8s-configmap training-config:/etc/config
 train-model:
     python train.py --config /etc/config/params.yaml
 
 # exec into existing pod with file transfer
-# @k8s exec namespace=prod selector=app=api
-# @k8s-upload ./script.py:/tmp/script.py
-# @k8s-download /tmp/results.json:./results.json
+@k8s exec namespace=prod selector=app=api
+@k8s-upload ./script.py:/tmp/script.py
+@k8s-download /tmp/results.json:./results.json
 run-script:
     python /tmp/script.py
 
 # apply manifests with wait
-# @k8s apply path=./manifests/redis namespace=test
-# @k8s wait=deployment/redis timeout=5m
+@k8s apply path=./manifests/redis namespace=test
+@k8s wait=deployment/redis timeout=5m
 setup-redis:
 
 # port forwarding during task
-# @k8s exec namespace=prod selector=app=api
-# @k8s-forward 5432:svc/postgres:5432
+@k8s exec namespace=prod selector=app=api
+@k8s-forward 5432:svc/postgres:5432
 test-db:
     python test_connections.py
 ```
@@ -131,7 +131,7 @@ test-db:
 gen-data:
     echo "hello world"
 
-# @pipe_from gen-data
+@pipe_from gen-data
 transform: gen-data
     tr 'a-z' 'A-Z'
 ```
@@ -139,7 +139,7 @@ transform: gen-data
 ## Managed Services
 
 ```bash
-# @service ready=http://localhost:8080/health startup_timeout=30s
+@service ready=http://localhost:8080/health startup_timeout=30s
 api-server:
     ./start-server.sh
 
