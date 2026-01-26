@@ -13,14 +13,17 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use k8s_openapi::api::batch::v1::Job;
-use k8s_openapi::api::core::v1::{Container, PodSpec, PodTemplateSpec, EnvVar, ConfigMapVolumeSource, SecretVolumeSource, Volume, VolumeMount};
+use k8s_openapi::api::core::v1::{
+    ConfigMapVolumeSource, Container, EnvVar, PodSpec, PodTemplateSpec, SecretVolumeSource, Volume,
+    VolumeMount,
+};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-use kube::api::{Api, DeleteParams, PostParams, LogParams};
+use kube::api::{Api, DeleteParams, LogParams, PostParams};
 use kube::config::{KubeConfigOptions, Kubeconfig};
-use kube::{Client, Config};
 use kube::runtime::wait::{await_condition, conditions};
+use kube::{Client, Config};
 
-use crate::config::{K8sConfig, K8sMode, PortForward};
+use dagrun_ast::{K8sConfig, K8sMode, PortForward};
 use tokio::process::Child;
 
 #[derive(Error, Debug)]
@@ -31,6 +34,7 @@ pub enum K8sError {
     Config(#[from] kube::config::KubeconfigError),
     #[error("pod not found: {0}")]
     PodNotFound(String),
+    #[allow(dead_code)]
     #[error("job '{0}' failed")]
     JobFailed(String),
     #[error("job '{0}' timed out after {1:?}")]
@@ -116,7 +120,12 @@ impl K8sResourceTracker {
         // delete applied manifests (via kubectl for now - kube-rs doesn't have apply)
         for manifest in self.applied.iter().rev() {
             info!(path = %manifest.path, namespace = %manifest.namespace, "cleaning up applied manifests");
-            let _ = delete_manifests_kubectl(&manifest.path, &manifest.namespace, manifest.context.as_deref()).await;
+            let _ = delete_manifests_kubectl(
+                &manifest.path,
+                &manifest.namespace,
+                manifest.context.as_deref(),
+            )
+            .await;
         }
     }
 }
@@ -158,7 +167,13 @@ fn sanitize_k8s_name(s: &str) -> String {
     let sanitized: String = s
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     let trimmed = sanitized.trim_matches('-');
     if trimmed.len() > 50 {
@@ -187,12 +202,24 @@ fn build_job(config: &K8sConfig, job_name: &str, command: &str) -> Result<Job, K
         let mut limits = BTreeMap::new();
 
         if let Some(ref cpu) = config.cpu {
-            requests.insert("cpu".to_string(), k8s_openapi::apimachinery::pkg::api::resource::Quantity(cpu.clone()));
-            limits.insert("cpu".to_string(), k8s_openapi::apimachinery::pkg::api::resource::Quantity(cpu.clone()));
+            requests.insert(
+                "cpu".to_string(),
+                k8s_openapi::apimachinery::pkg::api::resource::Quantity(cpu.clone()),
+            );
+            limits.insert(
+                "cpu".to_string(),
+                k8s_openapi::apimachinery::pkg::api::resource::Quantity(cpu.clone()),
+            );
         }
         if let Some(ref mem) = config.memory {
-            requests.insert("memory".to_string(), k8s_openapi::apimachinery::pkg::api::resource::Quantity(mem.clone()));
-            limits.insert("memory".to_string(), k8s_openapi::apimachinery::pkg::api::resource::Quantity(mem.clone()));
+            requests.insert(
+                "memory".to_string(),
+                k8s_openapi::apimachinery::pkg::api::resource::Quantity(mem.clone()),
+            );
+            limits.insert(
+                "memory".to_string(),
+                k8s_openapi::apimachinery::pkg::api::resource::Quantity(mem.clone()),
+            );
         }
 
         Some(k8s_openapi::api::core::v1::ResourceRequirements {
@@ -269,7 +296,11 @@ fn build_job(config: &K8sConfig, job_name: &str, command: &str) -> Result<Job, K
         command: Some(vec!["sh".to_string(), "-c".to_string()]),
         args: Some(vec![full_command]),
         resources,
-        volume_mounts: if volume_mounts.is_empty() { None } else { Some(volume_mounts) },
+        volume_mounts: if volume_mounts.is_empty() {
+            None
+        } else {
+            Some(volume_mounts)
+        },
         env: if env.is_empty() { None } else { Some(env) },
         ..Default::default()
     };
@@ -296,9 +327,17 @@ fn build_job(config: &K8sConfig, job_name: &str, command: &str) -> Result<Job, K
                     restart_policy: Some("Never".to_string()),
                     service_account_name: config.service_account.clone(),
                     node_selector,
-                    tolerations: if tolerations.is_empty() { None } else { Some(tolerations) },
+                    tolerations: if tolerations.is_empty() {
+                        None
+                    } else {
+                        Some(tolerations)
+                    },
                     containers: vec![container],
-                    volumes: if volumes.is_empty() { None } else { Some(volumes) },
+                    volumes: if volumes.is_empty() {
+                        None
+                    } else {
+                        Some(volumes)
+                    },
                     ..Default::default()
                 }),
             },
@@ -338,7 +377,9 @@ pub async fn run_job(
     let result = tokio::time::timeout(timeout_duration, cond).await;
 
     // get logs regardless of outcome
-    let logs = get_job_logs(&client, &config.namespace, &job_name).await.unwrap_or_default();
+    let logs = get_job_logs(&client, &config.namespace, &job_name)
+        .await
+        .unwrap_or_default();
 
     // print logs
     for line in logs.lines() {
@@ -374,34 +415,49 @@ pub async fn run_job(
     tracker.write().await.untrack_job(&job_name);
 
     if success {
-        Ok(K8sOutput { stdout: logs, success: true })
+        Ok(K8sOutput {
+            stdout: logs,
+            success: true,
+        })
     } else {
-        Ok(K8sOutput { stdout: logs, success: false })
+        Ok(K8sOutput {
+            stdout: logs,
+            success: false,
+        })
     }
 }
 
 /// Get logs from a job's pod
-async fn get_job_logs(client: &Client, namespace: &str, job_name: &str) -> Result<String, K8sError> {
+async fn get_job_logs(
+    client: &Client,
+    namespace: &str,
+    job_name: &str,
+) -> Result<String, K8sError> {
     use k8s_openapi::api::core::v1::Pod;
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let label_selector = format!("job-name={}", job_name);
 
     // find pod for this job
-    let pod_list = pods.list(&kube::api::ListParams::default().labels(&label_selector)).await?;
+    let pod_list = pods
+        .list(&kube::api::ListParams::default().labels(&label_selector))
+        .await?;
 
-    if let Some(pod) = pod_list.items.first() {
-        if let Some(ref name) = pod.metadata.name {
-            let logs = pods.logs(name, &LogParams::default()).await?;
-            return Ok(logs);
-        }
+    if let Some(pod) = pod_list.items.first()
+        && let Some(ref name) = pod.metadata.name
+    {
+        let logs = pods.logs(name, &LogParams::default()).await?;
+        return Ok(logs);
     }
 
     Ok(String::new())
 }
 
 /// Apply manifests from a path (uses kubectl since kube-rs doesn't have apply)
-pub async fn apply_manifests(config: &K8sConfig, tracker: &ResourceTracker) -> Result<(), K8sError> {
+pub async fn apply_manifests(
+    config: &K8sConfig,
+    tracker: &ResourceTracker,
+) -> Result<(), K8sError> {
     let path = config
         .path
         .as_ref()
@@ -421,7 +477,10 @@ pub async fn apply_manifests(config: &K8sConfig, tracker: &ResourceTracker) -> R
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(K8sError::MissingField(format!("kubectl apply failed: {}", stderr)));
+        return Err(K8sError::MissingField(format!(
+            "kubectl apply failed: {}",
+            stderr
+        )));
     }
 
     // print what was applied
@@ -460,7 +519,8 @@ pub async fn wait_for_resources(config: &K8sConfig) -> Result<(), K8sError> {
             &format!("--timeout={}s", timeout_duration.as_secs()),
         ]);
 
-        let output = tokio::time::timeout(timeout_duration + Duration::from_secs(10), cmd.output()).await;
+        let output =
+            tokio::time::timeout(timeout_duration + Duration::from_secs(10), cmd.output()).await;
 
         match output {
             Ok(Ok(out)) => {
@@ -520,7 +580,9 @@ pub async fn find_pod(config: &K8sConfig) -> Result<String, K8sError> {
 
     use k8s_openapi::api::core::v1::Pod;
     let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
-    let pod_list = pods.list(&kube::api::ListParams::default().labels(selector)).await?;
+    let pod_list = pods
+        .list(&kube::api::ListParams::default().labels(selector))
+        .await?;
 
     pod_list
         .items

@@ -191,6 +191,21 @@ end
 @end
 ```
 
+## Editor Integration
+
+dagrun includes an LSP server for editor support:
+
+![Editor Integration](docs/editor.png)
+
+**Features**: diagnostics, semantic highlighting, go-to-definition, find references, rename, hover docs, completions
+
+**Install**:
+```bash
+cargo install --git https://github.com/wseaton/dagrun.git dagrun-lsp
+```
+
+See [crates/dagrun-lsp/README.md](crates/dagrun-lsp/README.md) for Neovim and Claude Code setup.
+
 ## Examples
 
 See the `examples/` directory:

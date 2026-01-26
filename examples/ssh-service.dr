@@ -2,7 +2,7 @@
 # Tests running a managed service on a remote host via SSH
 
 # configure target host (update this for your environment)
-ssh_host := 192.168.12.9
+ssh_host := 10.10.0.1
 
 # remote managed service - starts an HTTP server on the remote host
 # uses forward=true to tunnel the health check through SSH

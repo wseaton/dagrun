@@ -1,0 +1,17 @@
+[package]
+name = "dagrun-lsp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "dagrun-lsp"
+path = "src/main.rs"
+
+[dependencies]
+dagrun-ast = { path = "../dagrun-ast" }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+shellexpand = "3"
+which = "7"

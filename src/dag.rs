@@ -5,7 +5,7 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::config::{Config, Task};
+use dagrun_ast::{Config, K8sMode, Task};
 
 #[derive(Error, Debug)]
 pub enum DagError {
@@ -176,11 +176,15 @@ impl TaskGraph {
             let (color, shape, type_prefix) = if task.is_join() {
                 ("#e8e8e8", "diamond", "")
             } else if task.k8s.is_some() {
-                let mode = task.k8s.as_ref().map(|k| match k.mode {
-                    crate::config::K8sMode::Job => "job",
-                    crate::config::K8sMode::Exec => "exec",
-                    crate::config::K8sMode::Apply => "apply",
-                }).unwrap_or("k8s");
+                let mode = task
+                    .k8s
+                    .as_ref()
+                    .map(|k| match k.mode {
+                        K8sMode::Job => "job",
+                        K8sMode::Exec => "exec",
+                        K8sMode::Apply => "apply",
+                    })
+                    .unwrap_or("k8s");
                 ("#b8e6b8", "box", mode)
             } else if task.ssh.is_some() {
                 ("#a8d5ff", "box", "ssh")
@@ -241,9 +245,9 @@ impl TaskGraph {
                 "◇ "
             } else if task.k8s.is_some() {
                 match task.k8s.as_ref().map(|k| &k.mode) {
-                    Some(crate::config::K8sMode::Job) => "☸job ",
-                    Some(crate::config::K8sMode::Exec) => "☸exec ",
-                    Some(crate::config::K8sMode::Apply) => "☸apply ",
+                    Some(K8sMode::Job) => "☸job ",
+                    Some(K8sMode::Exec) => "☸exec ",
+                    Some(K8sMode::Apply) => "☸apply ",
                     None => "☸ ",
                 }
             } else if task.ssh.is_some() {
@@ -316,7 +320,7 @@ impl TaskGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, DotenvSettings, Task};
+    use dagrun_ast::DotenvSettings;
 
     fn make_task(name: &str, run: &str, depends_on: Vec<&str>) -> Task {
         Task {
@@ -332,6 +336,7 @@ mod tests {
             k8s: None,
             service: None,
             shebang: None,
+            span: None,
         }
     }
 
@@ -342,7 +347,10 @@ mod tests {
         tasks.insert("b".to_string(), make_task("b", "echo b", vec![]));
         tasks.insert("c".to_string(), make_task("c", "echo c", vec!["a", "b"]));
 
-        let config = Config { tasks, dotenv: DotenvSettings::default() };
+        let config = Config {
+            tasks,
+            dotenv: DotenvSettings::default(),
+        };
         let graph = TaskGraph::from_config(config).unwrap();
         let groups = graph.parallel_groups().unwrap();
 
@@ -357,7 +365,10 @@ mod tests {
         tasks.insert("a".to_string(), make_task("a", "echo a", vec!["b"]));
         tasks.insert("b".to_string(), make_task("b", "echo b", vec!["a"]));
 
-        let config = Config { tasks, dotenv: DotenvSettings::default() };
+        let config = Config {
+            tasks,
+            dotenv: DotenvSettings::default(),
+        };
         let result = TaskGraph::from_config(config);
         assert!(matches!(result, Err(DagError::CycleDetected)));
     }

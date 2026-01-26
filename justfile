@@ -60,19 +60,19 @@ install:
 
 # run a quick smoke test
 smoke-test: build
-    ./target/release/dagrun -c examples/basic.dagrun run final
+    ./target/release/dagrun -c examples/basic.dr run final
 
 # validate all example configs
 validate-examples:
     #!/usr/bin/env bash
-    for f in examples/*.dagrun; do
+    for f in examples/*.dr; do
         echo "Validating $f..."
         cargo run -- -c "$f" validate
     done
 
 # generate graph PNG for complex example
 graph-example:
-    cargo run -- -c examples/complex-hybrid.dagrun graph -f png -o docs/complex-workflow.png
+    cargo run -- -c examples/complex-hybrid.dr graph -f png -o docs/complex-workflow.png
 
 # watch and run tests on change
 watch:

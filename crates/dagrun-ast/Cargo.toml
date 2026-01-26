@@ -1,0 +1,9 @@
+[package]
+name = "dagrun-ast"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+humantime = "2"
+serde = { version = "1", features = ["derive"] }
+url = "2"

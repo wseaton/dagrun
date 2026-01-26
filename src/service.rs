@@ -11,9 +11,9 @@ use tokio::sync::RwLock;
 use tokio::time::{sleep, timeout};
 use tracing::{error, info, warn};
 
-use crate::config::{LogOutput, ReadinessCheck, ServiceConfig, ServiceKind, Task};
 use crate::env::service_env_vars;
 use crate::ssh::{self, SessionCache};
+use dagrun_ast::{LogOutput, ReadinessCheck, ServiceConfig, ServiceKind, SshConfig, Task};
 
 /// Service state machine
 #[derive(Debug, Clone, PartialEq)]
@@ -111,16 +111,27 @@ impl ServiceManager {
         let (state, config, task) = {
             let services = self.services.read().await;
             let svc = services.get(name).unwrap();
-            (svc.state.clone(), svc.task.service.clone().unwrap(), svc.task.clone())
+            (
+                svc.state.clone(),
+                svc.task.service.clone().unwrap(),
+                svc.task.clone(),
+            )
         };
 
         match state {
             ServiceState::Ready => {
                 let forwarded_port = {
                     let services = self.services.read().await;
-                    services.get(name).and_then(|s| s.port_forward.as_ref().map(|pf| pf.local_port))
+                    services
+                        .get(name)
+                        .and_then(|s| s.port_forward.as_ref().map(|pf| pf.local_port))
                 };
-                return Ok(service_env_vars(name, &config.kind, config.ready.as_ref(), forwarded_port));
+                return Ok(service_env_vars(
+                    name,
+                    &config.kind,
+                    config.ready.as_ref(),
+                    forwarded_port,
+                ));
             }
             ServiceState::Failed(msg) => {
                 return Err(format!("service '{}' failed: {}", name, msg));
@@ -145,7 +156,12 @@ impl ServiceManager {
                 svc.port_forward.as_ref().map(|pf| pf.local_port),
             )
         };
-        Ok(service_env_vars(name, &config.kind, config.ready.as_ref(), forwarded_port))
+        Ok(service_env_vars(
+            name,
+            &config.kind,
+            config.ready.as_ref(),
+            forwarded_port,
+        ))
     }
 
     /// Release a service (stops if ref_count hits 0)
@@ -154,7 +170,13 @@ impl ServiceManager {
             let mut services = self.services.write().await;
             if let Some(svc) = services.get_mut(name) {
                 svc.ref_count = svc.ref_count.saturating_sub(1);
-                svc.ref_count == 0 && svc.task.service.as_ref().map(|s| s.kind == ServiceKind::Managed).unwrap_or(false)
+                svc.ref_count == 0
+                    && svc
+                        .task
+                        .service
+                        .as_ref()
+                        .map(|s| s.kind == ServiceKind::Managed)
+                        .unwrap_or(false)
             } else {
                 false
             }
@@ -166,7 +188,12 @@ impl ServiceManager {
     }
 
     /// Start a managed service
-    async fn start_service(&self, name: &str, task: &Task, config: &ServiceConfig) -> Result<(), String> {
+    async fn start_service(
+        &self,
+        name: &str,
+        task: &Task,
+        config: &ServiceConfig,
+    ) -> Result<(), String> {
         // mark as starting
         {
             let mut services = self.services.write().await;
@@ -181,13 +208,18 @@ impl ServiceManager {
         }
 
         // start the process
-        let cmd = task.run.as_ref().ok_or_else(|| format!("service '{}' has no run command", name))?;
+        let cmd = task
+            .run
+            .as_ref()
+            .ok_or_else(|| format!("service '{}' has no run command", name))?;
 
         info!(service = %name, "starting service");
 
         // check if this is a remote service (has ssh config)
         if let Some(ref ssh_config) = task.ssh {
-            return self.start_remote_service(name, cmd, ssh_config, config).await;
+            return self
+                .start_remote_service(name, cmd, ssh_config, config)
+                .await;
         }
 
         // run preflight check if configured
@@ -262,7 +294,7 @@ impl ServiceManager {
         &self,
         name: &str,
         cmd: &str,
-        ssh_config: &crate::config::SshConfig,
+        ssh_config: &SshConfig,
         config: &ServiceConfig,
     ) -> Result<(), String> {
         info!(service = %name, host = %ssh_config.host, "starting remote service");
@@ -291,8 +323,14 @@ impl ServiceManager {
         // build command with workdir if specified
         // use subshell to fully detach from SSH session
         let full_cmd = match &ssh_config.workdir {
-            Some(dir) => format!("cd {} && ( nohup {} </dev/null >/tmp/dagrun-{}.log 2>&1 & echo $! )", dir, cmd, name),
-            None => format!("( nohup {} </dev/null >/tmp/dagrun-{}.log 2>&1 & echo $! )", cmd, name),
+            Some(dir) => format!(
+                "cd {} && ( nohup {} </dev/null >/tmp/dagrun-{}.log 2>&1 & echo $! )",
+                dir, cmd, name
+            ),
+            None => format!(
+                "( nohup {} </dev/null >/tmp/dagrun-{}.log 2>&1 & echo $! )",
+                cmd, name
+            ),
         };
 
         let output = ssh::execute_remote(&session, name, &full_cmd, None, None)
@@ -304,8 +342,12 @@ impl ServiceManager {
         }
 
         // parse PID from output
-        let pid: u32 = output.stdout.trim().parse()
-            .map_err(|_| format!("failed to parse remote PID for '{}': {}", name, output.stdout))?;
+        let pid: u32 = output.stdout.trim().parse().map_err(|_| {
+            format!(
+                "failed to parse remote PID for '{}': {}",
+                name, output.stdout
+            )
+        })?;
 
         info!(service = %name, pid = pid, "captured remote PID");
 
@@ -313,17 +355,13 @@ impl ServiceManager {
         if config.log == LogOutput::Stream {
             let tail_cmd = format!("tail -f /tmp/dagrun-{}.log 2>/dev/null", name);
             info!(service = %name, "starting remote log stream");
-            ssh::spawn_streaming_command(
-                session.clone(),
-                name.to_string(),
-                tail_cmd,
-            );
+            ssh::spawn_streaming_command(session.clone(), name.to_string(), tail_cmd);
         }
 
         // check if we need to set up port forwarding for health checks
         // for SSH services, auto-tunnel any HTTP/TCP readiness check (not just localhost)
-        let should_forward = config.forward
-            || config.ready.as_ref().and_then(|r| r.port()).is_some();
+        let should_forward =
+            config.forward || config.ready.as_ref().and_then(|r| r.port()).is_some();
 
         let (tunneled_check, port_forward_info) = if should_forward {
             if let Some(ref ready) = config.ready {
@@ -403,7 +441,8 @@ impl ServiceManager {
 
         let start = tokio::time::Instant::now();
         let deadline = start + config.startup_timeout;
-        let max_attempts = (config.startup_timeout.as_secs_f64() / config.interval.as_secs_f64()).ceil() as u32;
+        let max_attempts =
+            (config.startup_timeout.as_secs_f64() / config.interval.as_secs_f64()).ceil() as u32;
         let mut attempt = 0u32;
 
         while tokio::time::Instant::now() < deadline {
@@ -412,14 +451,13 @@ impl ServiceManager {
             // check if process crashed
             {
                 let mut services = self.services.write().await;
-                if let Some(svc) = services.get_mut(name) {
-                    if let Some(ref mut child) = svc.child {
-                        if let Ok(Some(status)) = child.try_wait() {
-                            let msg = format!("service exited with status: {}", status);
-                            svc.state = ServiceState::Failed(msg.clone());
-                            return Err(msg);
-                        }
-                    }
+                if let Some(svc) = services.get_mut(name)
+                    && let Some(ref mut child) = svc.child
+                    && let Ok(Some(status)) = child.try_wait()
+                {
+                    let msg = format!("service exited with status: {}", status);
+                    svc.state = ServiceState::Failed(msg.clone());
+                    return Err(msg);
                 }
             }
 
@@ -447,7 +485,10 @@ impl ServiceManager {
             sleep(config.interval).await;
         }
 
-        let msg = format!("service '{}' failed to become ready within {:?}", name, config.startup_timeout);
+        let msg = format!(
+            "service '{}' failed to become ready within {:?}",
+            name, config.startup_timeout
+        );
         {
             let mut services = self.services.write().await;
             if let Some(svc) = services.get_mut(name) {
@@ -519,7 +560,8 @@ impl ServiceManager {
 
         // handle remote service shutdown
         if let (Some(pid), Some(ssh_config)) = (remote_pid, ssh_config) {
-            self.stop_remote_service(name, pid, &ssh_config, port_forward).await;
+            self.stop_remote_service(name, pid, &ssh_config, port_forward)
+                .await;
             return;
         }
 
@@ -537,7 +579,7 @@ impl ServiceManager {
         // send SIGTERM
         #[cfg(unix)]
         {
-            use nix::sys::signal::{kill, Signal};
+            use nix::sys::signal::{Signal, kill};
             use nix::unistd::Pid;
 
             if let Some(pid) = child.id() {
@@ -576,7 +618,7 @@ impl ServiceManager {
         &self,
         name: &str,
         pid: u32,
-        ssh_config: &crate::config::SshConfig,
+        ssh_config: &SshConfig,
         port_forward: Option<PortForwardInfo>,
     ) {
         info!(service = %name, pid = pid, host = %ssh_config.host, "stopping remote service");
@@ -590,7 +632,9 @@ impl ServiceManager {
                         pf.local_port,
                         &pf.remote_host,
                         pf.remote_port,
-                    ).await {
+                    )
+                    .await
+                    {
                         warn!(
                             service = %name,
                             error = %e,
@@ -606,7 +650,10 @@ impl ServiceManager {
                 }
 
                 // try graceful SIGTERM first, then SIGKILL
-                let kill_cmd = format!("kill {} 2>/dev/null || kill -9 {} 2>/dev/null || true", pid, pid);
+                let kill_cmd = format!(
+                    "kill {} 2>/dev/null || kill -9 {} 2>/dev/null || true",
+                    pid, pid
+                );
                 let _ = ssh::execute_remote(&session, name, &kill_cmd, None, None).await;
                 info!(service = %name, "remote service stopped");
             }
@@ -629,7 +676,11 @@ impl ServiceManager {
             services
                 .iter()
                 .filter(|(_, svc)| {
-                    svc.task.service.as_ref().map(|s| s.kind == ServiceKind::Managed).unwrap_or(false)
+                    svc.task
+                        .service
+                        .as_ref()
+                        .map(|s| s.kind == ServiceKind::Managed)
+                        .unwrap_or(false)
                         && svc.state != ServiceState::Stopped
                 })
                 .map(|(name, _)| name.clone())
@@ -673,6 +724,7 @@ mod tests {
             ssh: None,
             k8s: None,
             shebang: None,
+            span: None,
             service: Some(ServiceConfig {
                 kind: ServiceKind::Managed,
                 ready: Some(ready),
@@ -708,8 +760,14 @@ mod tests {
         assert!(result.is_ok(), "service should become ready: {:?}", result);
 
         let env = result.unwrap();
-        assert_eq!(env.get("DAGRUN_SVC_TCP_TEST_HOST"), Some(&"127.0.0.1".to_string()));
-        assert_eq!(env.get("DAGRUN_SVC_TCP_TEST_PORT"), Some(&"19876".to_string()));
+        assert_eq!(
+            env.get("DAGRUN_SVC_TCP_TEST_HOST"),
+            Some(&"127.0.0.1".to_string())
+        );
+        assert_eq!(
+            env.get("DAGRUN_SVC_TCP_TEST_PORT"),
+            Some(&"19876".to_string())
+        );
 
         // verify state is ready
         assert_eq!(mgr.state("tcp-test").await, Some(ServiceState::Ready));
@@ -739,10 +797,17 @@ mod tests {
         mgr.register(&task).await;
 
         let result = mgr.acquire("http-test").await;
-        assert!(result.is_ok(), "http service should become ready: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "http service should become ready: {:?}",
+            result
+        );
 
         let env = result.unwrap();
-        assert_eq!(env.get("DAGRUN_SVC_HTTP_TEST_URL"), Some(&"http://127.0.0.1:19877".to_string()));
+        assert_eq!(
+            env.get("DAGRUN_SVC_HTTP_TEST_URL"),
+            Some(&"http://127.0.0.1:19877".to_string())
+        );
 
         mgr.release("http-test").await;
         mgr.shutdown().await;
@@ -767,7 +832,11 @@ mod tests {
         mgr.register(&task).await;
 
         let result = mgr.acquire("cmd-test").await;
-        assert!(result.is_ok(), "cmd service should become ready: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cmd service should become ready: {:?}",
+            result
+        );
 
         mgr.release("cmd-test").await;
         mgr.shutdown().await;
@@ -793,6 +862,7 @@ mod tests {
             ssh: None,
             k8s: None,
             shebang: None,
+            span: None,
             service: Some(ServiceConfig {
                 kind: ServiceKind::Managed,
                 ready: Some(ReadinessCheck::Tcp {
@@ -846,6 +916,7 @@ mod tests {
             ssh: None,
             k8s: None,
             shebang: None,
+            span: None,
             service: Some(ServiceConfig {
                 kind: ServiceKind::External,
                 ready: Some(ReadinessCheck::Tcp {
@@ -865,7 +936,10 @@ mod tests {
         mgr.register(&task).await;
 
         let result = mgr.acquire("external-test").await;
-        assert!(result.is_ok(), "external service should be detected as ready");
+        assert!(
+            result.is_ok(),
+            "external service should be detected as ready"
+        );
 
         // release shouldn't kill the external service
         mgr.release("external-test").await;
@@ -902,15 +976,16 @@ mod tests {
         // release again - now it should stop
         mgr.release("refcount-test").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(mgr.state("refcount-test").await, Some(ServiceState::Stopped));
+        assert_eq!(
+            mgr.state("refcount-test").await,
+            Some(ServiceState::Stopped)
+        );
     }
 
     #[tokio::test]
     async fn test_ssh_service_registration() {
         // test that a service with SSH config can be registered
         // (actual SSH tests require connectivity, but we can test the plumbing)
-        use crate::config::SshConfig;
-
         let mgr = ServiceManager::new();
 
         let task = Task {
@@ -933,6 +1008,7 @@ mod tests {
             }),
             k8s: None,
             shebang: None,
+            span: None,
             service: Some(ServiceConfig {
                 kind: ServiceKind::Managed,
                 ready: Some(ReadinessCheck::Http {
@@ -951,7 +1027,10 @@ mod tests {
         mgr.register(&task).await;
 
         // verify registration
-        assert_eq!(mgr.state("ssh-service-test").await, Some(ServiceState::Stopped));
+        assert_eq!(
+            mgr.state("ssh-service-test").await,
+            Some(ServiceState::Stopped)
+        );
 
         // acquiring would fail without actual SSH, but that's expected
         // this test just verifies the registration path works

@@ -6,6 +6,7 @@ use std::fs;
 use std::net::TcpListener;
 use tempfile::TempDir;
 
+#[allow(deprecated)]
 fn dagrun_cmd() -> Command {
     Command::cargo_bin("dagrun").unwrap()
 }

@@ -1,0 +1,17 @@
+{
+  "name": "dagrun-lsp",
+  "version": "0.1.0",
+  "description": "Language server for dagrun (.dr) task runner files",
+  "author": {
+    "name": "weaton"
+  },
+  "lspServers": {
+    "dagrun": {
+      "command": "dagrun-lsp",
+      "extensionToLanguage": {
+        ".dr": "dagrun",
+        ".dagrun": "dagrun"
+      }
+    }
+  }
+}
