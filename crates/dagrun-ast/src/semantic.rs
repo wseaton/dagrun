@@ -44,6 +44,9 @@ pub struct DotenvSettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
     pub name: String,
+    /// Task parameters (positional arguments)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<TaskParameter>,
     pub run: Option<String>,
     pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -77,6 +80,16 @@ impl Task {
     pub fn is_remote(&self) -> bool {
         self.ssh.is_some()
     }
+}
+
+/// Task parameter definition
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskParameter {
+    pub name: String,
+    /// None = required, Some = optional with default
+    pub default: Option<String>,
+    #[serde(skip)]
+    pub span: Option<Span>,
 }
 
 /// Parsed shebang

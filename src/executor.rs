@@ -102,6 +102,43 @@ impl Executor {
         self.execute_sequential(tasks).await
     }
 
+    /// Run task with positional arguments bound to parameters
+    pub async fn run_task_with_args(
+        &self,
+        target: &str,
+        args: &[String],
+    ) -> Result<Vec<TaskResult>, ExecutorError> {
+        let tasks = self.graph.execution_order_for(target)?;
+
+        // if no args, just run normally
+        if args.is_empty() {
+            return self.execute_sequential(tasks).await;
+        }
+
+        // execute deps normally, bind args only to target task
+        let mut results = Vec::new();
+        for task in tasks {
+            let task_to_run = if task.name == target {
+                // bind parameters for target task
+                bind_task_params(task, args)
+                    .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?
+            } else {
+                // deps must have no required params or use defaults
+                bind_task_params(task, &[])
+                    .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?
+            };
+
+            let result = self.execute_single(&task_to_run).await;
+            let failed = result.status == TaskStatus::Failed;
+            results.push(result);
+            if failed {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
+
     pub async fn run_all(&self) -> Result<Vec<TaskResult>, ExecutorError> {
         let groups = self.graph.parallel_groups()?;
         let mut all_results = Vec::new();
@@ -661,6 +698,64 @@ fn expand_upload_globs(transfers: &[FileTransfer]) -> Vec<FileTransfer> {
     }
 
     result
+}
+
+/// Bind positional args to task parameters, substituting in the task body
+fn bind_task_params(task: &Task, args: &[String]) -> Result<Task, String> {
+    let params = &task.parameters;
+
+    // validate argument count
+    let required_count = params.iter().filter(|p| p.default.is_none()).count();
+    if args.len() < required_count {
+        let param_names: Vec<_> = params
+            .iter()
+            .filter(|p| p.default.is_none())
+            .map(|p| p.name.as_str())
+            .collect();
+        return Err(format!(
+            "Task '{}' requires {} argument(s) ({}) but got {}",
+            task.name,
+            required_count,
+            param_names.join(", "),
+            args.len()
+        ));
+    }
+    if args.len() > params.len() {
+        return Err(format!(
+            "Task '{}' accepts {} argument(s) but got {}",
+            task.name,
+            params.len(),
+            args.len()
+        ));
+    }
+
+    // build parameter bindings
+    let mut bindings = HashMap::new();
+    for (i, param) in params.iter().enumerate() {
+        let value = if i < args.len() {
+            args[i].clone()
+        } else if let Some(default) = &param.default {
+            default.clone()
+        } else {
+            return Err(format!("Missing required argument '{}'", param.name));
+        };
+        bindings.insert(param.name.clone(), value);
+    }
+
+    // substitute parameters in task body
+    let run = task.run.as_ref().map(|body| {
+        let mut result = body.clone();
+        for (name, value) in &bindings {
+            let pattern = format!("{{{{{}}}}}", name);
+            result = result.replace(&pattern, value);
+        }
+        result
+    });
+
+    Ok(Task {
+        run,
+        ..task.clone()
+    })
 }
 
 #[cfg(test)]

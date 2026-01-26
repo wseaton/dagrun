@@ -325,6 +325,7 @@ mod tests {
     fn make_task(name: &str, run: &str, depends_on: Vec<&str>) -> Task {
         Task {
             name: name.to_string(),
+            parameters: vec![],
             run: Some(run.to_string()),
             depends_on: depends_on.into_iter().map(String::from).collect(),
             service_deps: vec![],

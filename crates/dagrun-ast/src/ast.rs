@@ -55,6 +55,28 @@ pub struct ShellExpansion {
 }
 
 // ============================================================================
+// Task Parameters
+// ============================================================================
+
+/// Task parameter definition: `name` or `name="default"`
+#[derive(Debug, Clone)]
+pub struct Parameter {
+    /// Parameter name
+    pub name: Spanned<String>,
+    /// Default value (None = required, Some = optional)
+    pub default: Option<Spanned<ParameterDefault>>,
+}
+
+/// Default value for a parameter
+#[derive(Debug, Clone)]
+pub enum ParameterDefault {
+    /// Literal string value: `"value"`
+    Literal(String),
+    /// Variable reference: `{{varname}}`
+    Variable(Interpolation),
+}
+
+// ============================================================================
 // Tasks
 // ============================================================================
 
@@ -64,6 +86,8 @@ pub struct TaskDecl {
     pub annotations: Vec<Spanned<Annotation>>,
     /// Task name
     pub name: Spanned<String>,
+    /// Task parameters (between name and colon)
+    pub parameters: Vec<Spanned<Parameter>>,
     /// The colon token span
     pub colon_span: Span,
     /// Dependencies after the colon

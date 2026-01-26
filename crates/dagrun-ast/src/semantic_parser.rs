@@ -9,7 +9,7 @@ use crate::ast::{self, AnnotationKind, BodyLine, CommandSegment, Dependency, Ite
 use crate::parser;
 use crate::semantic::{
     Config, ConfigMount, DotenvSettings, FileTransfer, K8sConfig, K8sMode, LogOutput, PortForward,
-    ReadinessCheck, ServiceConfig, ServiceKind, Shebang, SshConfig, Task,
+    ReadinessCheck, ServiceConfig, ServiceKind, Shebang, SshConfig, Task, TaskParameter,
 };
 
 /// Parse a dagrun source file into a semantic Config
@@ -151,6 +151,9 @@ impl<'a> Context<'a> {
     ) -> Result<Task, ParseConfigError> {
         let name = task_decl.name.node.clone();
 
+        // lower parameters
+        let parameters = self.lower_task_parameters(&task_decl.parameters);
+
         let mut timeout: Option<Duration> = None;
         let mut retry: u32 = 0;
         let mut pipe_from: Vec<String> = Vec::new();
@@ -255,6 +258,7 @@ impl<'a> Context<'a> {
 
         Ok(Task {
             name,
+            parameters,
             run,
             depends_on,
             service_deps,
@@ -268,6 +272,32 @@ impl<'a> Context<'a> {
             shebang,
             span: Some(task_span),
         })
+    }
+
+    fn lower_task_parameters(
+        &self,
+        params: &[crate::Spanned<ast::Parameter>],
+    ) -> Vec<TaskParameter> {
+        params
+            .iter()
+            .map(|p| {
+                let default = p.node.default.as_ref().map(|d| match &d.node {
+                    ast::ParameterDefault::Literal(s) => s.clone(),
+                    ast::ParameterDefault::Variable(interp) => {
+                        // resolve variable reference for default
+                        self.variables
+                            .get(&interp.name.node)
+                            .cloned()
+                            .unwrap_or_else(|| format!("{{{{{}}}}}", interp.name.node))
+                    }
+                });
+                TaskParameter {
+                    name: p.node.name.node.clone(),
+                    default,
+                    span: Some(p.span),
+                }
+            })
+            .collect()
     }
 
     fn lower_task_body(&self, body: &Option<ast::TaskBody>) -> (Option<String>, Option<Shebang>) {

@@ -128,8 +128,9 @@ impl<'a> Parser<'a> {
                     return self.parse_variable(name_clone, name_span);
                 }
 
-                // task header: name:
-                if self.check(TokenKind::Colon) {
+                // task header: name: or name param1 param2:
+                if self.check(TokenKind::Colon) || self.check(TokenKind::Identifier(String::new()))
+                {
                     let annotations = std::mem::take(pending_annotations);
                     return self.parse_task(name_clone, name_span, annotations);
                 }
@@ -496,6 +497,9 @@ impl<'a> Parser<'a> {
         name_span: Span,
         annotations: Vec<Spanned<Annotation>>,
     ) -> Result<Option<Spanned<Item>>, ParseError> {
+        // parse parameters before colon
+        let parameters = self.parse_task_parameters()?;
+
         let colon_span = self.expect(TokenKind::Colon)?.span;
         self.skip_whitespace();
 
@@ -533,12 +537,148 @@ impl<'a> Parser<'a> {
             Item::Task(TaskDecl {
                 annotations,
                 name: Spanned::new(name, name_span),
+                parameters,
                 colon_span,
                 dependencies,
                 body,
             }),
             full_span,
         )))
+    }
+
+    /// Parse task parameters: `param1 param2="default"`
+    fn parse_task_parameters(&mut self) -> Result<Vec<Spanned<Parameter>>, ParseError> {
+        let mut params = Vec::new();
+
+        while !self.at_line_end() && !self.check(TokenKind::Colon) {
+            self.skip_whitespace();
+            if self.at_line_end() || self.check(TokenKind::Colon) {
+                break;
+            }
+
+            let param = self.parse_parameter()?;
+            params.push(param);
+        }
+
+        Ok(params)
+    }
+
+    /// Parse a single parameter: `name` or `name="default"` or `name={{var}}`
+    fn parse_parameter(&mut self) -> Result<Spanned<Parameter>, ParseError> {
+        let name = self.parse_identifier()?;
+        let start_span = name.span;
+
+        // check for default value (=)
+        let default = if self.check(TokenKind::Equals) {
+            self.advance(); // consume =
+            Some(self.parse_parameter_default()?)
+        } else {
+            None
+        };
+
+        let end_span = default.as_ref().map(|d| d.span).unwrap_or(name.span);
+
+        Ok(Spanned::new(
+            Parameter { name, default },
+            start_span.merge(end_span),
+        ))
+    }
+
+    /// Parse parameter default value: quoted string or {{variable}}
+    fn parse_parameter_default(&mut self) -> Result<Spanned<ParameterDefault>, ParseError> {
+        let start_span = self.peek().span;
+
+        // check for {{variable}} reference
+        if self.check(TokenKind::OpenBrace) {
+            let open1 = self.advance().span;
+            if self.check(TokenKind::OpenBrace) {
+                let open2 = self.advance().span;
+                self.skip_whitespace();
+                let var_name = self.parse_identifier()?;
+                self.skip_whitespace();
+
+                let mut close_span = None;
+                if self.check(TokenKind::CloseBrace) {
+                    let close1 = self.advance().span;
+                    if self.check(TokenKind::CloseBrace) {
+                        close_span = Some(close1.merge(self.advance().span));
+                    }
+                }
+
+                let interp = Interpolation {
+                    open_span: open1.merge(open2),
+                    name: var_name,
+                    close_span,
+                };
+                let span = start_span.merge(close_span.unwrap_or(start_span));
+                return Ok(Spanned::new(ParameterDefault::Variable(interp), span));
+            }
+            // single brace - error
+            return Err(ParseError::new(
+                ParseErrorKind::Expected,
+                start_span,
+                "expected '{{' for variable reference",
+            ));
+        }
+
+        // quoted string default
+        if self.check(TokenKind::Quote) {
+            self.advance(); // opening quote
+            let mut value = String::new();
+            while !self.at_end() {
+                let tok = self.peek();
+                match &tok.kind {
+                    TokenKind::Quote => {
+                        let end = tok.span;
+                        self.advance();
+                        return Ok(Spanned::new(
+                            ParameterDefault::Literal(value),
+                            start_span.merge(end),
+                        ));
+                    }
+                    TokenKind::Newline | TokenKind::Eof => break,
+                    _ => {
+                        value.push_str(tok.text(self.source));
+                        self.advance();
+                    }
+                }
+            }
+            return Err(ParseError::new(
+                ParseErrorKind::UnclosedDelimiter,
+                start_span,
+                "unclosed quote in parameter default",
+            ));
+        }
+
+        // unquoted literal - consume until whitespace/colon
+        let mut value = String::new();
+        let mut end_span = start_span;
+        while !self.at_line_end() {
+            let tok = self.peek();
+            match &tok.kind {
+                TokenKind::Whitespace | TokenKind::Colon | TokenKind::Newline | TokenKind::Eof => {
+                    break;
+                }
+                _ => {
+                    value.push_str(tok.text(self.source));
+                    end_span = tok.span;
+                    self.advance();
+                }
+            }
+        }
+
+        if value.is_empty() {
+            return Err(ParseError::new(
+                ParseErrorKind::Expected,
+                start_span,
+                "expected parameter default value",
+            ));
+        }
+
+        Ok(Spanned::new(
+            ParameterDefault::Literal(value),
+            start_span.merge(end_span),
+        ))
     }
 
     fn parse_dependency(&mut self) -> Result<Spanned<Dependency>, ParseError> {
@@ -1183,6 +1323,59 @@ mod tests {
 
         if let Item::Task(task) = &file.items[0].node {
             assert_eq!(task.name.span.text(source), "build");
+        }
+    }
+
+    #[test]
+    fn parse_task_with_parameters() {
+        let (file, errors) = parse("release version:\n\tcargo set-version {{version}}");
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+
+        if let Item::Task(task) = &file.items[0].node {
+            assert_eq!(task.name.node, "release");
+            assert_eq!(task.parameters.len(), 1);
+            assert_eq!(task.parameters[0].node.name.node, "version");
+            assert!(task.parameters[0].node.default.is_none());
+        } else {
+            panic!("expected task");
+        }
+    }
+
+    #[test]
+    fn parse_task_with_default_parameter() {
+        let (file, errors) = parse("release version=\"0.1.0\":\n\tcargo set-version {{version}}");
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+
+        if let Item::Task(task) = &file.items[0].node {
+            assert_eq!(task.parameters.len(), 1);
+            assert_eq!(task.parameters[0].node.name.node, "version");
+            if let Some(default) = &task.parameters[0].node.default {
+                if let ParameterDefault::Literal(val) = &default.node {
+                    assert_eq!(val, "0.1.0");
+                } else {
+                    panic!("expected literal default");
+                }
+            } else {
+                panic!("expected default value");
+            }
+        } else {
+            panic!("expected task");
+        }
+    }
+
+    #[test]
+    fn parse_task_with_multiple_parameters() {
+        let (file, errors) = parse("deploy env version=\"latest\":\n\techo {{env}} {{version}}");
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+
+        if let Item::Task(task) = &file.items[0].node {
+            assert_eq!(task.parameters.len(), 2);
+            assert_eq!(task.parameters[0].node.name.node, "env");
+            assert!(task.parameters[0].node.default.is_none());
+            assert_eq!(task.parameters[1].node.name.node, "version");
+            assert!(task.parameters[1].node.default.is_some());
+        } else {
+            panic!("expected task");
         }
     }
 }

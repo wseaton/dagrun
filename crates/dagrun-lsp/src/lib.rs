@@ -394,6 +394,45 @@ fn collect_semantic_tokens(source: &str, ast: &SourceFile) -> Vec<RawToken> {
                     token_type: 0, // FUNCTION
                     modifiers: 1,  // DEFINITION
                 });
+                // task parameters
+                for param in &task.parameters {
+                    tokens.push(RawToken {
+                        span: param.node.name.span,
+                        token_type: 7, // PARAMETER
+                        modifiers: 1,  // DEFINITION
+                    });
+                    // highlight default value if present
+                    if let Some(default) = &param.node.default {
+                        match &default.node {
+                            dagrun_ast::ParameterDefault::Literal(_) => {
+                                tokens.push(RawToken {
+                                    span: default.span,
+                                    token_type: 5, // STRING
+                                    modifiers: 0,
+                                });
+                            }
+                            dagrun_ast::ParameterDefault::Variable(interp) => {
+                                tokens.push(RawToken {
+                                    span: interp.open_span,
+                                    token_type: 6, // OPERATOR
+                                    modifiers: 0,
+                                });
+                                tokens.push(RawToken {
+                                    span: interp.name.span,
+                                    token_type: 1, // VARIABLE
+                                    modifiers: 0,
+                                });
+                                if let Some(close) = interp.close_span {
+                                    tokens.push(RawToken {
+                                        span: close,
+                                        token_type: 6, // OPERATOR
+                                        modifiers: 0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 // colon
                 tokens.push(RawToken {
                     span: task.colon_span,
@@ -729,6 +768,23 @@ fn position_to_offset(source: &str, pos: Position) -> u32 {
     offset as u32
 }
 
+/// Find the parameters of the task containing the given offset
+fn find_enclosing_task_params<'a>(ast: &'a SourceFile, offset: u32) -> Option<Vec<&'a str>> {
+    for item in &ast.items {
+        if let Item::Task(task) = &item.node {
+            if item.span.contains(offset) {
+                return Some(
+                    task.parameters
+                        .iter()
+                        .map(|p| p.node.name.node.as_str())
+                        .collect(),
+                );
+            }
+        }
+    }
+    None
+}
+
 // ============================================================================
 // Completions
 // ============================================================================
@@ -750,11 +806,12 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
         }
     }
 
-    // context: inside {{...}} - complete variables
+    // context: inside {{...}} - complete variables and task parameters
     if let Some(open_idx) = before_cursor.rfind("{{") {
         let after_open = &before_cursor[open_idx + 2..];
         if !after_open.contains("}}") {
-            return variables
+            let offset = position_to_offset(source, pos);
+            let mut items: Vec<CompletionItem> = variables
                 .iter()
                 .map(|name| CompletionItem {
                     label: name.to_string(),
@@ -763,6 +820,18 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
                     ..Default::default()
                 })
                 .collect();
+
+            // also suggest task parameters if inside a task body
+            if let Some(params) = find_enclosing_task_params(ast, offset) {
+                items.extend(params.iter().map(|name| CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some("parameter".to_string()),
+                    ..Default::default()
+                }));
+            }
+
+            return items;
         }
     }
 
@@ -873,6 +942,13 @@ fn find_definition_at(source: &str, ast: &SourceFile, offset: u32) -> Option<Spa
     // find what's at the cursor position
     for item in &ast.items {
         if let Item::Task(task) = &item.node {
+            // collect task-scoped parameter definitions
+            let param_defs: HashMap<&str, Span> = task
+                .parameters
+                .iter()
+                .map(|p| (p.node.name.node.as_str(), p.node.name.span))
+                .collect();
+
             // check dependencies
             for dep in &task.dependencies {
                 if dep.span.contains(offset) {
@@ -891,6 +967,12 @@ fn find_definition_at(source: &str, ast: &SourceFile, offset: u32) -> Option<Spa
                         for seg in &cmd.segments {
                             if let CommandSegment::Interpolation(interp) = &seg.node {
                                 if interp.name.span.contains(offset) {
+                                    // check parameters first, then global variables
+                                    if let Some(span) =
+                                        param_defs.get(interp.name.node.as_str()).copied()
+                                    {
+                                        return Some(span);
+                                    }
                                     return var_defs.get(interp.name.node.as_str()).copied();
                                 }
                             }
@@ -974,6 +1056,13 @@ fn check_undefined_variables(source: &str, ast: &SourceFile) -> Vec<Diagnostic> 
     for item in &ast.items {
         match &item.node {
             Item::Task(task) => {
+                // collect task-scoped parameters
+                let params: HashSet<&str> = task
+                    .parameters
+                    .iter()
+                    .map(|p| p.node.name.node.as_str())
+                    .collect();
+
                 // check annotations
                 for ann in &task.annotations {
                     check_annotation_vars(source, &ann.node.kind, &defined, &mut diagnostics);
@@ -986,7 +1075,11 @@ fn check_undefined_variables(source: &str, ast: &SourceFile) -> Vec<Diagnostic> 
                             for seg in &cmd.segments {
                                 if let CommandSegment::Interpolation(interp) = &seg.node {
                                     let name = &interp.name.node;
-                                    if !name.is_empty() && !defined.contains(name.as_str()) {
+                                    // check both global variables and task parameters
+                                    if !name.is_empty()
+                                        && !defined.contains(name.as_str())
+                                        && !params.contains(name.as_str())
+                                    {
                                         diagnostics.push(Diagnostic {
                                             range: span_to_range(source, interp.name.span),
                                             severity: Some(DiagnosticSeverity::ERROR),

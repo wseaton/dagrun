@@ -113,6 +113,10 @@ enum Commands {
         /// Run only this task, skip dependencies
         #[arg(long)]
         only: bool,
+
+        /// Positional arguments for task parameters
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 
     /// Run all tasks in the graph
@@ -159,20 +163,21 @@ async fn main() -> anyhow::Result<()> {
     let graph = TaskGraph::from_config(config)?;
 
     match cli.command {
-        Commands::Run { task, only } => {
+        Commands::Run { task, only, args } => {
             let executor = Executor::new(graph);
             executor.register_services().await;
 
             let results = if only {
                 // run just this task (no deps)
                 if let Some(t) = executor.graph.task(&task) {
-                    vec![executor.execute_single(t).await]
+                    let bound_task = bind_task_parameters(t, &args)?;
+                    vec![executor.execute_single(&bound_task).await]
                 } else {
                     executor.close().await;
                     anyhow::bail!("Task '{}' not found", task);
                 }
             } else {
-                executor.run_task(&task).await?
+                executor.run_task_with_args(&task, &args).await?
             };
 
             executor.close().await;
@@ -275,6 +280,64 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
             path.display()
         ),
     }
+}
+
+/// Bind CLI arguments to task parameters, substituting in the task body
+fn bind_task_parameters(task: &Task, args: &[String]) -> anyhow::Result<Task> {
+    let params = &task.parameters;
+
+    // validate argument count
+    let required_count = params.iter().filter(|p| p.default.is_none()).count();
+    if args.len() < required_count {
+        let param_names: Vec<_> = params
+            .iter()
+            .filter(|p| p.default.is_none())
+            .map(|p| p.name.as_str())
+            .collect();
+        anyhow::bail!(
+            "Task '{}' requires {} argument(s) ({}) but got {}",
+            task.name,
+            required_count,
+            param_names.join(", "),
+            args.len()
+        );
+    }
+    if args.len() > params.len() {
+        anyhow::bail!(
+            "Task '{}' accepts {} argument(s) but got {}",
+            task.name,
+            params.len(),
+            args.len()
+        );
+    }
+
+    // build parameter bindings
+    let mut bindings = std::collections::HashMap::new();
+    for (i, param) in params.iter().enumerate() {
+        let value = if i < args.len() {
+            args[i].clone()
+        } else if let Some(default) = &param.default {
+            default.clone()
+        } else {
+            anyhow::bail!("Missing required argument '{}'", param.name);
+        };
+        bindings.insert(param.name.clone(), value);
+    }
+
+    // substitute parameters in task body
+    let run = task.run.as_ref().map(|body| {
+        let mut result = body.clone();
+        for (name, value) in &bindings {
+            let pattern = format!("{{{{{}}}}}", name);
+            result = result.replace(&pattern, value);
+        }
+        result
+    });
+
+    Ok(Task {
+        run,
+        ..task.clone()
+    })
 }
 
 fn print_results(results: &[executor::TaskResult]) {

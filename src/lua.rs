@@ -200,6 +200,7 @@ fn parse_task_table(name: &str, opts: &Table) -> LuaResult<Task> {
 
     Ok(Task {
         name: name.to_string(),
+        parameters: vec![],
         run,
         depends_on,
         service_deps: Vec::new(),

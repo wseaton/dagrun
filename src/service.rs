@@ -714,6 +714,7 @@ mod tests {
     fn make_service_task(name: &str, cmd: &str, ready: ReadinessCheck) -> Task {
         Task {
             name: name.to_string(),
+            parameters: vec![],
             run: Some(cmd.to_string()),
             depends_on: vec![],
             service_deps: vec![],
@@ -852,6 +853,7 @@ mod tests {
         // service that will never be ready (wrong port)
         let task = Task {
             name: "timeout-test".to_string(),
+            parameters: vec![],
             run: Some("sleep 30".to_string()),
             depends_on: vec![],
             service_deps: vec![],
@@ -906,6 +908,7 @@ mod tests {
         // external service - we don't start it, just wait for ready
         let task = Task {
             name: "external-test".to_string(),
+            parameters: vec![],
             run: None, // no command for external
             depends_on: vec![],
             service_deps: vec![],
@@ -990,6 +993,7 @@ mod tests {
 
         let task = Task {
             name: "ssh-service-test".to_string(),
+            parameters: vec![],
             run: Some("python3 -m http.server 8888".to_string()),
             depends_on: vec![],
             service_deps: vec![],

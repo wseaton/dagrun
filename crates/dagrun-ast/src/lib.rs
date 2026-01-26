@@ -38,7 +38,7 @@ pub use span::{Span, Spanned};
 // re-export semantic types (for executor)
 pub use semantic::{
     Config, ConfigMount, DotenvSettings, FileTransfer, K8sConfig, K8sMode, LogOutput, PortForward,
-    ReadinessCheck, ServiceConfig, ServiceKind, Shebang, SshConfig, Task,
+    ReadinessCheck, ServiceConfig, ServiceKind, Shebang, SshConfig, Task, TaskParameter,
 };
 
 // re-export semantic parser
