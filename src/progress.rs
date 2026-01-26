@@ -11,7 +11,6 @@ const TASK_COLORS: &[Color] = &[
     Color::Yellow,
     Color::Blue,
     Color::Green,
-    Color::Red,
 ];
 
 /// get a consistent color for a task name based on hash
