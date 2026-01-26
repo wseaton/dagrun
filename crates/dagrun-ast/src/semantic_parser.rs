@@ -649,4 +649,28 @@ svc:
             _ => panic!("expected Command readiness check, got {:?}", svc.ready),
         }
     }
+
+    #[test]
+    fn test_task_parameters() {
+        let source = r#"greet name:
+    echo "Hello {{name}}"
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("greet").unwrap();
+        assert_eq!(task.parameters.len(), 1, "should have 1 parameter");
+        assert_eq!(task.parameters[0].name, "name");
+        assert!(task.parameters[0].default.is_none());
+    }
+
+    #[test]
+    fn test_task_parameters_with_default() {
+        let source = r#"greet name="world":
+    echo "Hello {{name}}"
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("greet").unwrap();
+        assert_eq!(task.parameters.len(), 1, "should have 1 parameter");
+        assert_eq!(task.parameters[0].name, "name");
+        assert_eq!(task.parameters[0].default, Some("world".to_string()));
+    }
 }

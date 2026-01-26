@@ -115,18 +115,19 @@ impl Executor {
             return self.execute_sequential(tasks).await;
         }
 
-        // execute deps normally, bind args only to target task
+        // build name->value mapping from target task's parameters
+        let target_task = self
+            .graph
+            .task(target)
+            .ok_or_else(|| ExecutorError::TaskNotFound(target.to_string()))?;
+        let bindings = build_param_bindings(target_task, args)
+            .map_err(|_| ExecutorError::TaskFailed(target.to_string(), 0))?;
+
+        // apply bindings to all tasks in the chain
         let mut results = Vec::new();
         for task in tasks {
-            let task_to_run = if task.name == target {
-                // bind parameters for target task
-                bind_task_params(task, args)
-                    .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?
-            } else {
-                // deps must have no required params or use defaults
-                bind_task_params(task, &[])
-                    .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?
-            };
+            let task_to_run = apply_bindings(task, &bindings)
+                .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?;
 
             let result = self.execute_single(&task_to_run).await;
             let failed = result.status == TaskStatus::Failed;
@@ -700,8 +701,8 @@ fn expand_upload_globs(transfers: &[FileTransfer]) -> Vec<FileTransfer> {
     result
 }
 
-/// Bind positional args to task parameters, substituting in the task body
-fn bind_task_params(task: &Task, args: &[String]) -> Result<Task, String> {
+/// Build a name->value mapping from positional args and task parameters
+fn build_param_bindings(task: &Task, args: &[String]) -> Result<HashMap<String, String>, String> {
     let params = &task.parameters;
 
     // validate argument count
@@ -742,10 +743,33 @@ fn bind_task_params(task: &Task, args: &[String]) -> Result<Task, String> {
         bindings.insert(param.name.clone(), value);
     }
 
+    Ok(bindings)
+}
+
+/// Apply pre-built bindings to a task, using defaults for unbound params
+fn apply_bindings(task: &Task, bindings: &HashMap<String, String>) -> Result<Task, String> {
+    let params = &task.parameters;
+
+    // build final bindings for this task
+    let mut task_bindings = HashMap::new();
+    for param in params {
+        let value = if let Some(v) = bindings.get(&param.name) {
+            v.clone()
+        } else if let Some(default) = &param.default {
+            default.clone()
+        } else {
+            return Err(format!(
+                "Task '{}' requires parameter '{}' but it was not provided",
+                task.name, param.name
+            ));
+        };
+        task_bindings.insert(param.name.clone(), value);
+    }
+
     // substitute parameters in task body
     let run = task.run.as_ref().map(|body| {
         let mut result = body.clone();
-        for (name, value) in &bindings {
+        for (name, value) in &task_bindings {
             let pattern = format!("{{{{{}}}}}", name);
             result = result.replace(&pattern, value);
         }
@@ -756,6 +780,12 @@ fn bind_task_params(task: &Task, args: &[String]) -> Result<Task, String> {
         run,
         ..task.clone()
     })
+}
+
+/// Bind positional args to task parameters (for --only mode)
+fn bind_task_params(task: &Task, args: &[String]) -> Result<Task, String> {
+    let bindings = build_param_bindings(task, args)?;
+    apply_bindings(task, &bindings)
 }
 
 #[cfg(test)]
