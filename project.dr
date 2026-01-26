@@ -1,0 +1,34 @@
+# dagrun recipes for justflow/dagrun project
+
+# reinstall the main dagrun binary locally
+reinstall:
+    cargo install --path . --force
+
+# reinstall the dagrun-lsp server locally
+reinstall-lsp:
+    cargo install --path crates/dagrun-lsp --force
+
+# upgrade both dagrun and lsp
+upgrade-all: reinstall reinstall-lsp
+    echo "upgraded dagrun and dagrun-lsp"
+
+# bump version using cargo-edit
+bump-version version:
+    cargo set-version {{version}}
+
+# commit version bump
+commit-version version: bump-version
+    git add Cargo.toml Cargo.lock
+    git commit -m "bump to v{{version}}" -s
+
+# tag the release
+tag-release version: commit-version
+    git tag v{{version}}
+
+# push tag to origin
+push-release version: tag-release
+    git push && git push --tags
+
+# full release workflow: bump, commit, tag, push
+release version: push-release
+    echo "released v{{version}}"
