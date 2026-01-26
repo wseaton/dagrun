@@ -182,7 +182,7 @@ pub enum AnnotationKind {
     /// `@join`
     Join,
 
-    /// `@ssh host key=value ...`
+    /// `@ssh host=user@host key=value ...`
     Ssh(SshAnnotation),
 
     /// `@upload local:remote`
@@ -224,9 +224,7 @@ pub enum AnnotationKind {
 
 #[derive(Debug, Clone)]
 pub struct SshAnnotation {
-    /// Host (first positional argument)
-    pub host: Option<Spanned<String>>,
-    /// Key-value pairs (user=, port=, workdir=, identity=)
+    /// Key-value pairs (host=, user=, port=, workdir=, identity=)
     pub options: Vec<Spanned<KeyValue>>,
 }
 

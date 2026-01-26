@@ -565,13 +565,6 @@ fn collect_annotation_tokens(kind: &AnnotationKind, tokens: &mut Vec<RawToken>) 
             }
         }
         AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                tokens.push(RawToken {
-                    span: host.span,
-                    token_type: 5, // STRING
-                    modifiers: 0,
-                });
-            }
             collect_kv_tokens(&ssh.options, tokens);
         }
         AnnotationKind::Upload(ft)
@@ -1005,14 +998,7 @@ fn find_var_in_annotation(kind: &AnnotationKind, offset: u32, source: &str) -> O
     };
 
     match kind {
-        AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                if let Some(span) = check_value(host) {
-                    return Some(span);
-                }
-            }
-            check_kv_list(&ssh.options)
-        }
+        AnnotationKind::Ssh(ssh) => check_kv_list(&ssh.options),
         AnnotationKind::K8s(k8s) => check_kv_list(&k8s.options),
         AnnotationKind::Upload(ft)
         | AnnotationKind::Download(ft)
@@ -1120,9 +1106,6 @@ fn check_annotation_vars(
 
     match kind {
         AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                check_value(host, diagnostics);
-            }
             check_kv_list(&ssh.options, diagnostics);
         }
         AnnotationKind::K8s(k8s) => {
@@ -1384,6 +1367,19 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
         )
     };
 
+    // detect shell env var assignments like VAR=value or VAR="value"
+    let is_env_var_assignment = |word: &str| -> bool {
+        if let Some(eq_idx) = word.find('=') {
+            if eq_idx > 0 {
+                let var_name = &word[..eq_idx];
+                return var_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            }
+        }
+        false
+    };
+
     for item in &ast.items {
         if let Item::Task(task) = &item.node {
             // check annotations for file paths
@@ -1450,7 +1446,11 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
                     if let BodyLine::Command(cmd) = &line.node {
                         if let Some(first_seg) = cmd.segments.first() {
                             if let CommandSegment::Text(text) = &first_seg.node {
-                                let first_word = text.split_whitespace().next().unwrap_or("");
+                                // skip env var assignments (VAR=value) to find actual command
+                                let first_word = text
+                                    .split_whitespace()
+                                    .find(|word| !is_env_var_assignment(word))
+                                    .unwrap_or("");
                                 if !first_word.is_empty()
                                     && !first_word.contains('/')
                                     && !first_word.contains("{{")
@@ -1543,11 +1543,6 @@ fn check_unused_variables(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
 fn collect_used_vars_in_annotation<'a>(kind: &'a AnnotationKind, used: &mut HashSet<&'a str>) {
     match kind {
         AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                if let Some(var) = extract_var(&host.node) {
-                    used.insert(var);
-                }
-            }
             for kv in &ssh.options {
                 if let Some(var) = extract_var(&kv.node.value.node) {
                     used.insert(var);
@@ -1825,11 +1820,6 @@ fn find_var_name_in_annotation(kind: &AnnotationKind, offset: u32) -> Option<(St
 
     match kind {
         AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                if let Some(r) = check_spanned(host) {
-                    return Some(r);
-                }
-            }
             for kv in &ssh.options {
                 if let Some(r) = check_spanned(&kv.node.value) {
                     return Some(r);
@@ -1945,11 +1935,6 @@ fn find_var_refs_in_annotation(kind: &AnnotationKind, var_name: &str) -> Vec<Spa
 
     match kind {
         AnnotationKind::Ssh(ssh) => {
-            if let Some(host) = &ssh.host {
-                if let Some(span) = check_spanned(host) {
-                    refs.push(span);
-                }
-            }
             for kv in &ssh.options {
                 if let Some(span) = check_spanned(&kv.node.value) {
                     refs.push(span);

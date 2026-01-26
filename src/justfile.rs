@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_ssh_annotation() {
         let config =
-            parse_justflow("@ssh host.example.com user=deploy\nremote:\n\techo hi").unwrap();
+            parse_justflow("@ssh host=host.example.com user=deploy\nremote:\n\techo hi").unwrap();
         let task = config.tasks.get("remote").unwrap();
         assert!(task.ssh.is_some());
         let ssh = task.ssh.as_ref().unwrap();

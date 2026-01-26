@@ -363,21 +363,13 @@ impl<'a> Context<'a> {
     }
 
     fn lower_ssh_annotation(&self, ssh: &ast::SshAnnotation) -> SshConfig {
-        let host = ssh
-            .host
-            .as_ref()
-            .map(|h| self.substitute_variables(&h.node))
-            .unwrap_or_default();
-
-        let mut config = SshConfig {
-            host,
-            ..Default::default()
-        };
+        let mut config = SshConfig::default();
 
         for opt in &ssh.options {
             let key = &opt.node.key.node;
             let value = self.substitute_variables(&opt.node.value.node);
             match key.as_str() {
+                "host" => config.host = value,
                 "user" => config.user = Some(value),
                 "port" => config.port = value.parse().ok(),
                 "workdir" => config.workdir = Some(value),

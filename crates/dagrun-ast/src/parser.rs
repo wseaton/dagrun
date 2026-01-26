@@ -276,35 +276,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ssh_annotation(&mut self) -> Result<SshAnnotation, ParseError> {
-        let mut host = None;
-        let mut options = Vec::new();
-
-        while !self.at_line_end() {
-            self.skip_whitespace();
-            if self.at_line_end() {
-                break;
-            }
-
-            // try to parse key=value
-            if let Some(kv) = self.try_parse_key_value() {
-                options.push(kv);
-            } else {
-                // first non-kv is the host
-                if host.is_none() {
-                    let tok = self.advance();
-                    let text = match &tok.kind {
-                        TokenKind::Identifier(s) => s.clone(),
-                        TokenKind::Text(s) => s.clone(),
-                        _ => continue,
-                    };
-                    host = Some(Spanned::new(text, tok.span));
-                } else {
-                    self.advance();
-                }
-            }
-        }
-
-        Ok(SshAnnotation { host, options })
+        let options = self.parse_key_value_options();
+        Ok(SshAnnotation { options })
     }
 
     fn parse_file_transfer(&mut self) -> Result<FileTransferAnnotation, ParseError> {
@@ -1293,13 +1266,34 @@ mod tests {
 
     #[test]
     fn parse_ssh_annotation() {
-        let (file, errors) = parse("@ssh host.example.com user=deploy\nremote:\n\techo hi");
+        let (file, errors) =
+            parse("@ssh host=user@host.example.com user=deploy\nremote:\n\techo hi");
         assert!(errors.is_empty());
 
         if let Item::Task(task) = &file.items[0].node {
             if let AnnotationKind::Ssh(ssh) = &task.annotations[0].node.kind {
-                assert_eq!(ssh.host.as_ref().unwrap().node, "host.example.com");
-                assert_eq!(ssh.options.len(), 1);
+                assert_eq!(ssh.options.len(), 2);
+                assert_eq!(ssh.options[0].node.key.node, "host");
+                assert_eq!(ssh.options[0].node.value.node, "user@host.example.com");
+                assert_eq!(ssh.options[1].node.key.node, "user");
+                assert_eq!(ssh.options[1].node.value.node, "deploy");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ssh_annotation_with_workdir() {
+        let (file, errors) =
+            parse("@ssh host=wseaton@10.14.217.13 workdir=/home/wseaton/git/vllm\ntest:\n\tpwd");
+        assert!(errors.is_empty());
+
+        if let Item::Task(task) = &file.items[0].node {
+            if let AnnotationKind::Ssh(ssh) = &task.annotations[0].node.kind {
+                assert_eq!(ssh.options.len(), 2);
+                assert_eq!(ssh.options[0].node.key.node, "host");
+                assert_eq!(ssh.options[0].node.value.node, "wseaton@10.14.217.13");
+                assert_eq!(ssh.options[1].node.key.node, "workdir");
+                assert_eq!(ssh.options[1].node.value.node, "/home/wseaton/git/vllm");
             }
         }
     }
