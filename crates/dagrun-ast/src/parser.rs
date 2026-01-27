@@ -695,7 +695,29 @@ impl<'a> Parser<'a> {
         let start_span = self.peek().span;
 
         while !self.at_end() {
-            // check for indent
+            // blank lines: only keep if followed by more indented content
+            if self.check(TokenKind::Newline) {
+                // peek ahead to see if there's more body content
+                let saved_pos = self.pos;
+                let span = self.advance().span;
+
+                // skip any additional blank lines
+                while self.check(TokenKind::Newline) {
+                    self.advance();
+                }
+
+                // if next is indent, body continues - record blank line(s)
+                if self.check(TokenKind::Indent) {
+                    lines.push(Spanned::new(BodyLine::Empty, span));
+                    continue;
+                } else {
+                    // body ends here, rewind
+                    self.pos = saved_pos;
+                    break;
+                }
+            }
+
+            // check for indent (actual body content)
             if !self.check(TokenKind::Indent) {
                 break;
             }

@@ -1,4 +1,4 @@
-use tower_lsp::{LspService, Server};
+use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 
 use dagrun_lsp::Backend;

@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dagrun_ast::{
     AnnotationKind, BodyLine, CommandSegment, Dependency, Item, KeyValue, ParseError, SourceFile,
     Span, Spanned, parse,
 };
 use tokio::sync::RwLock;
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
+use tower_lsp_server::{Client, LanguageServer};
 
 // semantic token types we emit
 const TOKEN_TYPES: &[SemanticTokenType] = &[
@@ -29,9 +29,54 @@ const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::READONLY,    // 2
 ];
 
+// ============================================================================
+// Shebang / Language Detection
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BodyLanguage {
+    Shell,
+    Python,
+}
+
+fn detect_language(body: &dagrun_ast::TaskBody) -> BodyLanguage {
+    for line in &body.lines {
+        if let BodyLine::Shebang(shebang) = &line.node {
+            let interp = &shebang.interpreter.node;
+            let args: Vec<&str> = shebang.args.iter().map(|a| a.node.as_str()).collect();
+
+            // uv script shebang: #!/usr/bin/env -S uv run --script
+            if interp.ends_with("/env") && args.iter().any(|a| *a == "uv") {
+                return BodyLanguage::Python;
+            }
+
+            // direct python interpreter: #!/usr/bin/python3
+            if interp.contains("python") {
+                return BodyLanguage::Python;
+            }
+
+            // env python: #!/usr/bin/env python3
+            if interp.ends_with("/env") && args.first().is_some_and(|a| a.contains("python")) {
+                return BodyLanguage::Python;
+            }
+
+            // explicit bash/sh
+            if interp.contains("bash") || interp.contains("/sh") {
+                return BodyLanguage::Shell;
+            }
+
+            // unknown shebang - default to shell for now
+            // (could add more languages here: ruby, node, etc.)
+        }
+    }
+
+    // no shebang = default shell
+    BodyLanguage::Shell
+}
+
 pub struct Backend {
     client: Client,
-    documents: Arc<RwLock<HashMap<Url, String>>>,
+    documents: Arc<RwLock<HashMap<Uri, String>>>,
 }
 
 impl Backend {
@@ -42,7 +87,7 @@ impl Backend {
         }
     }
 
-    async fn publish_diagnostics(&self, uri: Url, source: &str) {
+    async fn publish_diagnostics(&self, uri: Uri, source: &str) {
         let (ast, errors) = parse(source);
 
         // parse errors
@@ -60,7 +105,6 @@ impl Backend {
         // filesystem diagnostics (paths, executables)
         let working_dir = uri
             .to_file_path()
-            .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()));
         diagnostics.extend(check_filesystem(source, &ast, working_dir.as_deref()));
 
@@ -70,7 +114,6 @@ impl Backend {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
@@ -107,6 +150,7 @@ impl LanguageServer for Backend {
                     ]),
                     ..Default::default()
                 }),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -342,6 +386,27 @@ impl LanguageServer for Backend {
 
         Ok(Some(DocumentSymbolResponse::Flat(symbols)))
     }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+
+        let docs = self.documents.read().await;
+        let Some(source) = docs.get(&uri) else {
+            return Ok(None);
+        };
+
+        let (ast, _) = parse(source);
+        let source_owned = source.clone();
+        drop(docs); // release lock before async formatting
+
+        let edits = format_task_bodies(&source_owned, &ast, &params.options).await;
+
+        if edits.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(edits))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -351,7 +416,7 @@ struct RawToken {
     modifiers: u32,
 }
 
-fn collect_semantic_tokens(source: &str, ast: &SourceFile) -> Vec<RawToken> {
+fn collect_semantic_tokens(_source: &str, ast: &SourceFile) -> Vec<RawToken> {
     let mut tokens = Vec::new();
 
     for item in &ast.items {
@@ -1048,7 +1113,7 @@ fn find_definition_at(source: &str, ast: &SourceFile, offset: u32) -> Option<Spa
     None
 }
 
-fn find_var_in_annotation(kind: &AnnotationKind, offset: u32, source: &str) -> Option<Span> {
+fn find_var_in_annotation(kind: &AnnotationKind, offset: u32, _source: &str) -> Option<Span> {
     let check_value = |val: &Spanned<String>| -> Option<Span> {
         for var_ref in find_interpolations(&val.node, val.span) {
             if var_ref.span.contains(offset) {
@@ -1459,6 +1524,10 @@ fn find_cycle<'a>(
 // Filesystem validation (paths, executables, interpreters)
 // ============================================================================
 
+fn is_shell_task_body(body: &dagrun_ast::TaskBody) -> bool {
+    detect_language(body) == BodyLanguage::Shell
+}
+
 fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut checked_paths: HashSet<String> = HashSet::new();
@@ -1592,36 +1661,41 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
                     }
                 }
 
-                // check first word of commands for executables
-                for line in &body.lines {
-                    if let BodyLine::Command(cmd) = &line.node {
-                        if let Some(first_seg) = cmd.segments.first() {
-                            if let CommandSegment::Text(text) = &first_seg.node {
-                                // skip env var assignments (VAR=value) to find actual command
-                                let first_word = text
-                                    .split_whitespace()
-                                    .find(|word| !is_env_var_assignment(word))
-                                    .unwrap_or("");
-                                if !first_word.is_empty()
-                                    && !first_word.contains('/')
-                                    && !first_word.contains("{{")
-                                    && !first_word.starts_with('$')
-                                    && !first_word.starts_with('-')
-                                {
-                                    if checked_executables.insert(first_word.to_string())
-                                        && !is_builtin(first_word)
-                                        && which::which(first_word).is_err()
+                // only check executables for shell bodies (no shebang or shell shebang)
+                let is_shell_body = is_shell_task_body(body);
+
+                if is_shell_body {
+                    // check first word of commands for executables
+                    for line in &body.lines {
+                        if let BodyLine::Command(cmd) = &line.node {
+                            if let Some(first_seg) = cmd.segments.first() {
+                                if let CommandSegment::Text(text) = &first_seg.node {
+                                    // skip env var assignments (VAR=value) to find actual command
+                                    let first_word = text
+                                        .split_whitespace()
+                                        .find(|word| !is_env_var_assignment(word))
+                                        .unwrap_or("");
+                                    if !first_word.is_empty()
+                                        && !first_word.contains('/')
+                                        && !first_word.contains("{{")
+                                        && !first_word.starts_with('$')
+                                        && !first_word.starts_with('-')
                                     {
-                                        diagnostics.push(Diagnostic {
-                                            range: span_to_range(source, first_seg.span),
-                                            severity: Some(DiagnosticSeverity::WARNING),
-                                            source: Some("dagrun".to_string()),
-                                            message: format!(
-                                                "command not found in PATH: {}",
-                                                first_word
-                                            ),
-                                            ..Default::default()
-                                        });
+                                        if checked_executables.insert(first_word.to_string())
+                                            && !is_builtin(first_word)
+                                            && which::which(first_word).is_err()
+                                        {
+                                            diagnostics.push(Diagnostic {
+                                                range: span_to_range(source, first_seg.span),
+                                                severity: Some(DiagnosticSeverity::WARNING),
+                                                source: Some("dagrun".to_string()),
+                                                message: format!(
+                                                    "command not found in PATH: {}",
+                                                    first_word
+                                                ),
+                                                ..Default::default()
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -1909,7 +1983,7 @@ fn span_contains(span: Span, offset: u32) -> bool {
 // ============================================================================
 
 /// find what symbol is at offset, return (name, span)
-fn get_symbol_at(source: &str, ast: &SourceFile, offset: u32) -> Option<(String, Span)> {
+fn get_symbol_at(_source: &str, ast: &SourceFile, offset: u32) -> Option<(String, Span)> {
     for item in &ast.items {
         match &item.node {
             Item::Variable(var) => {
@@ -2139,7 +2213,7 @@ fn collect_document_symbols(source: &str, ast: &SourceFile) -> Vec<SymbolInforma
                     tags: None,
                     deprecated: None,
                     location: Location {
-                        uri: Url::parse("file:///").unwrap(), // placeholder, will be ignored
+                        uri: "file:///".parse().unwrap(), // placeholder, will be ignored
                         range: span_to_range(source, var.name.span),
                     },
                     container_name: None,
@@ -2153,7 +2227,7 @@ fn collect_document_symbols(source: &str, ast: &SourceFile) -> Vec<SymbolInforma
                     tags: None,
                     deprecated: None,
                     location: Location {
-                        uri: Url::parse("file:///").unwrap(),
+                        uri: "file:///".parse().unwrap(),
                         range: span_to_range(source, item.span),
                     },
                     container_name: None,
@@ -2167,7 +2241,7 @@ fn collect_document_symbols(source: &str, ast: &SourceFile) -> Vec<SymbolInforma
                     tags: None,
                     deprecated: None,
                     location: Location {
-                        uri: Url::parse("file:///").unwrap(),
+                        uri: "file:///".parse().unwrap(),
                         range: span_to_range(source, item.span),
                     },
                     container_name: None,
@@ -2178,4 +2252,550 @@ fn collect_document_symbols(source: &str, ast: &SourceFile) -> Vec<SymbolInforma
     }
 
     symbols
+}
+
+// ============================================================================
+// Formatting
+// ============================================================================
+
+async fn format_task_bodies(
+    source: &str,
+    ast: &SourceFile,
+    _options: &FormattingOptions,
+) -> Vec<TextEdit> {
+    let mut tasks = Vec::new();
+
+    for item in &ast.items {
+        if let Item::Task(task) = &item.node {
+            if let Some(body) = &task.body {
+                if let Some(task) = prepare_format_task(source, body) {
+                    tasks.push(task);
+                }
+            }
+        }
+    }
+
+    // run all formatters in parallel
+    let results = futures::future::join_all(tasks.into_iter().map(|t| t.execute())).await;
+
+    results.into_iter().flatten().collect()
+}
+
+struct FormatTask {
+    language: BodyLanguage,
+    masked_content: String,
+    masks: Vec<String>,
+    original_text: String,
+    base_indent: String,
+    span: Span,
+    source: String,
+}
+
+impl FormatTask {
+    async fn execute(self) -> Option<TextEdit> {
+        let formatted = match self.language {
+            BodyLanguage::Shell => match run_shfmt_async(&self.masked_content).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("shfmt failed: {}", e);
+                    return None;
+                }
+            },
+            BodyLanguage::Python => match run_ruff_async(&self.masked_content).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("ruff failed: {}", e);
+                    return None;
+                }
+            },
+        };
+
+        let unmasked = unmask_interpolations(&formatted, &self.masks);
+        let reindented = reindent_block(&unmasked, &self.base_indent);
+
+        if reindented.trim_end() == self.original_text.trim_end() {
+            return None;
+        }
+
+        Some(TextEdit {
+            range: span_to_range(&self.source, self.span),
+            new_text: reindented,
+        })
+    }
+}
+
+fn prepare_format_task(source: &str, body: &dagrun_ast::TaskBody) -> Option<FormatTask> {
+    let language = detect_language(body);
+
+    let mut code_lines: Vec<(Span, String)> = Vec::new();
+
+    for line in &body.lines {
+        match &line.node {
+            BodyLine::Command(_) => {
+                let text = line.span.text(source);
+                code_lines.push((line.span, text.to_string()));
+            }
+            BodyLine::Shebang(_) | BodyLine::Empty => {}
+        }
+    }
+
+    if code_lines.is_empty() {
+        return None;
+    }
+
+    let body_start = code_lines.first()?.0.start;
+    let body_end = code_lines.last()?.0.end;
+    let body_span = Span::new(body_start, body_end);
+
+    let original_text = body_span.text(source).to_string();
+    let (dedented, base_indent) = dedent_block(&original_text);
+    let (masked_content, masks) = mask_interpolations(&dedented);
+
+    Some(FormatTask {
+        language,
+        masked_content,
+        masks,
+        original_text,
+        base_indent,
+        span: body_span,
+        source: source.to_string(),
+    })
+}
+
+fn dedent_block(text: &str) -> (String, String) {
+    let lines: Vec<&str> = text.lines().collect();
+
+    // find minimum indentation (ignoring empty lines)
+    let min_indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    let base_indent = if min_indent > 0 && !lines.is_empty() {
+        let first_non_empty = lines.iter().find(|l| !l.trim().is_empty()).unwrap_or(&"");
+        first_non_empty[..min_indent].to_string()
+    } else {
+        String::new()
+    };
+
+    let dedented: String = lines
+        .iter()
+        .map(|l| {
+            if l.len() >= min_indent {
+                &l[min_indent..]
+            } else {
+                l.trim_start()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    (dedented, base_indent)
+}
+
+fn reindent_block(text: &str, indent: &str) -> String {
+    text.lines()
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", indent, l)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// mask {{var}} interpolations with __DAGRUN_VAR_N__ placeholders
+fn mask_interpolations(text: &str) -> (String, Vec<String>) {
+    let mut result = String::with_capacity(text.len());
+    let mut masks = Vec::new();
+    let mut chars = text.char_indices().peekable();
+
+    while let Some((i, c)) = chars.next() {
+        if c == '{' {
+            if let Some(&(_, '{')) = chars.peek() {
+                chars.next();
+                // find closing }}
+                let start = i;
+                let mut depth = 1;
+                let mut end = start + 2;
+
+                while let Some((j, ch)) = chars.next() {
+                    end = j + ch.len_utf8();
+                    if ch == '{' {
+                        if let Some(&(_, '{')) = chars.peek() {
+                            chars.next();
+                            depth += 1;
+                        }
+                    } else if ch == '}' {
+                        if let Some(&(_, '}')) = chars.peek() {
+                            chars.next();
+                            depth -= 1;
+                            if depth == 0 {
+                                end += 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let var_text = &text[start..end];
+                let placeholder = format!("__DAGRUN_VAR_{}__", masks.len());
+                masks.push(var_text.to_string());
+                result.push_str(&placeholder);
+                continue;
+            }
+        }
+        result.push(c);
+    }
+
+    (result, masks)
+}
+
+fn unmask_interpolations(text: &str, masks: &[String]) -> String {
+    let mut result = text.to_string();
+    for (i, original) in masks.iter().enumerate() {
+        let placeholder = format!("__DAGRUN_VAR_{}__", i);
+        result = result.replace(&placeholder, original);
+    }
+    result
+}
+
+static SHFMT_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+fn is_shfmt_available() -> bool {
+    *SHFMT_AVAILABLE.get_or_init(|| {
+        std::process::Command::new("shfmt")
+            .arg("--version")
+            .output()
+            .is_ok()
+    })
+}
+
+#[cfg(test)]
+fn run_shfmt(input: &str) -> std::result::Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    if !is_shfmt_available() {
+        return Err("shfmt not installed".to_string());
+    }
+
+    let mut child = Command::new("shfmt")
+        .args(["-i", "0", "-s", "-bn"]) // indent=0, simplify, binary ops on new line
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn shfmt: {}", e))?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or("failed to open stdin")?;
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("failed to wait on shfmt: {}", e))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8: {}", e))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("shfmt exited with error: {}", stderr))
+    }
+}
+
+static RUFF_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+fn is_ruff_available() -> bool {
+    *RUFF_AVAILABLE.get_or_init(|| {
+        std::process::Command::new("ruff")
+            .arg("--version")
+            .output()
+            .is_ok()
+    })
+}
+
+#[cfg(test)]
+fn run_ruff(input: &str) -> std::result::Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    if !is_ruff_available() {
+        return Err("ruff not installed".to_string());
+    }
+
+    let mut child = Command::new("ruff")
+        .args(["format", "-"]) // format from stdin
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn ruff: {}", e))?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or("failed to open stdin")?;
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("failed to wait on ruff: {}", e))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8: {}", e))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("ruff exited with error: {}", stderr))
+    }
+}
+
+async fn run_shfmt_async(input: &str) -> std::result::Result<String, String> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    if !is_shfmt_available() {
+        return Err("shfmt not installed".to_string());
+    }
+
+    let mut child = Command::new("shfmt")
+        .args(["-i", "0", "-s", "-bn"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn shfmt: {}", e))?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or("failed to open stdin")?;
+        stdin
+            .write_all(input.as_bytes())
+            .await
+            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("failed to wait on shfmt: {}", e))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8: {}", e))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("shfmt exited with error: {}", stderr))
+    }
+}
+
+async fn run_ruff_async(input: &str) -> std::result::Result<String, String> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    if !is_ruff_available() {
+        return Err("ruff not installed".to_string());
+    }
+
+    let mut child = Command::new("ruff")
+        .args(["format", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn ruff: {}", e))?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or("failed to open stdin")?;
+        stdin
+            .write_all(input.as_bytes())
+            .await
+            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("failed to wait on ruff: {}", e))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8: {}", e))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("ruff exited with error: {}", stderr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_unmask_interpolations() {
+        let input = "echo {{foo}} && ls {{bar}}";
+        let (masked, masks) = mask_interpolations(input);
+
+        assert!(!masked.contains("{{"));
+        assert_eq!(masks.len(), 2);
+        assert_eq!(masks[0], "{{foo}}");
+        assert_eq!(masks[1], "{{bar}}");
+
+        let unmasked = unmask_interpolations(&masked, &masks);
+        assert_eq!(unmasked, input);
+    }
+
+    #[test]
+    fn test_dedent_block() {
+        let input = "    echo hello\n    echo world";
+        let (dedented, _) = dedent_block(input);
+        assert_eq!(dedented, "echo hello\necho world");
+    }
+
+    #[test]
+    fn test_reindent_block() {
+        let input = "echo hello\necho world";
+        let reindented = reindent_block(input, "    ");
+        assert_eq!(reindented, "    echo hello\n    echo world");
+    }
+
+    #[test]
+    fn test_shfmt_basic() {
+        // skip if shfmt not installed
+        if std::process::Command::new("shfmt")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let input = "echo    hello";
+        let result = run_shfmt(input).unwrap();
+        assert_eq!(result.trim(), "echo hello");
+    }
+
+    #[test]
+    fn test_shfmt_with_interpolation() {
+        if std::process::Command::new("shfmt")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let input = "echo    {{foo}}   &&   ls";
+        let (masked, masks) = mask_interpolations(input);
+        let formatted = run_shfmt(&masked).unwrap();
+        let result = unmask_interpolations(&formatted, &masks);
+
+        assert!(result.contains("{{foo}}"));
+        assert!(result.contains("echo"));
+        assert!(result.contains("&&"));
+    }
+
+    #[test]
+    fn test_ruff_basic() {
+        if std::process::Command::new("ruff")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let input = "x=1\ny=2";
+        let result = run_ruff(input).unwrap();
+        assert!(result.contains("x = 1"));
+        assert!(result.contains("y = 2"));
+    }
+
+    #[test]
+    fn test_ruff_with_interpolation() {
+        if std::process::Command::new("ruff")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let input = "x={{foo}}";
+        let (masked, masks) = mask_interpolations(input);
+        let formatted = run_ruff(&masked).unwrap();
+        let result = unmask_interpolations(&formatted, &masks);
+
+        assert!(result.contains("{{foo}}"));
+    }
+
+    #[test]
+    fn test_detect_language_default_shell() {
+        let source = "task:\n    echo hello";
+        let (ast, _) = parse(source);
+        if let Some(item) = ast.items.iter().find(|i| matches!(i.node, Item::Task(_))) {
+            if let Item::Task(task) = &item.node {
+                if let Some(body) = &task.body {
+                    assert_eq!(detect_language(body), BodyLanguage::Shell);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_language_python_shebang() {
+        let source = "task:\n    #!python\n    print('hello')";
+        let (ast, _) = parse(source);
+        if let Some(item) = ast.items.iter().find(|i| matches!(i.node, Item::Task(_))) {
+            if let Item::Task(task) = &item.node {
+                if let Some(body) = &task.body {
+                    assert_eq!(detect_language(body), BodyLanguage::Python);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_language_env_python() {
+        let source = "task:\n    #!/usr/bin/env python3\n    print('hello')";
+        let (ast, _) = parse(source);
+        if let Some(item) = ast.items.iter().find(|i| matches!(i.node, Item::Task(_))) {
+            if let Item::Task(task) = &item.node {
+                if let Some(body) = &task.body {
+                    assert_eq!(detect_language(body), BodyLanguage::Python);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_language_uv_script() {
+        let source = "task:\n    #!/usr/bin/env -S uv run --script\n    print('hello')";
+        let (ast, _) = parse(source);
+        if let Some(item) = ast.items.iter().find(|i| matches!(i.node, Item::Task(_))) {
+            if let Item::Task(task) = &item.node {
+                if let Some(body) = &task.body {
+                    assert_eq!(detect_language(body), BodyLanguage::Python);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_language_bash_shebang() {
+        let source = "task:\n    #!/bin/bash\n    echo hello";
+        let (ast, _) = parse(source);
+        if let Some(item) = ast.items.iter().find(|i| matches!(i.node, Item::Task(_))) {
+            if let Item::Task(task) = &item.node {
+                if let Some(body) = &task.body {
+                    assert_eq!(detect_language(body), BodyLanguage::Shell);
+                }
+            }
+        }
+    }
 }
