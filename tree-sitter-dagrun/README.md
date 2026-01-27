@@ -1,5 +1,7 @@
 # tree-sitter-dagrun
 
+> **Warning**: The tree-sitter parser is experimental and may crash neovim when editing malformed syntax. For now, only the filetype registration is enabled by default. Enable full treesitter support at your own risk.
+
 Tree-sitter grammar for dagrun task files (`.dagrun`). Provides syntax highlighting with nested language injection for task bodies.
 
 ## Features

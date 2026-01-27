@@ -1,5 +1,15 @@
 -- nvim-treesitter integration for dagrun
--- add this to your neovim config (e.g., after lazy.nvim setup)
+-- WARNING: treesitter is currently disabled due to crashes on malformed syntax
+-- just register the filetype for now, enable treesitter at your own risk
+
+-- register filetype (always safe)
+vim.filetype.add({
+  extension = {
+    dagrun = "dagrun",
+  },
+})
+
+--[[ TREESITTER CONFIG (disabled - crashes on bad syntax)
 
 local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
 
@@ -14,13 +24,6 @@ parser_config.dagrun = {
   filetype = "dagrun",
 }
 
--- register filetype
-vim.filetype.add({
-  extension = {
-    dagrun = "dagrun",
-  },
-})
-
 -- ensure queries are found (copy queries/ to your nvim runtime or symlink)
 -- option 1: symlink queries to nvim config
 --   ln -s ~/git/justflow/tree-sitter-dagrun/queries ~/.config/nvim/queries/dagrun
@@ -32,3 +35,5 @@ vim.opt.runtimepath:append("~/git/justflow/tree-sitter-dagrun")
 -- :TSInstall dagrun
 -- or
 -- :TSInstallFromGrammar dagrun
+
+]]
