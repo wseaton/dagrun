@@ -54,6 +54,8 @@ impl Backend {
         diagnostics.extend(check_undefined_tasks(source, &ast));
         diagnostics.extend(check_dependency_cycles(source, &ast));
         diagnostics.extend(check_unused_variables(source, &ast));
+        diagnostics.extend(check_undefined_contexts(source, &ast));
+        diagnostics.extend(check_unused_contexts(source, &ast));
 
         // filesystem diagnostics (paths, executables)
         let working_dir = uri
@@ -503,6 +505,38 @@ fn collect_semantic_tokens(source: &str, ast: &SourceFile) -> Vec<RawToken> {
                 }
             }
 
+            Item::ContextBlock(ctx) => {
+                // @context
+                tokens.push(RawToken {
+                    span: ctx.open_span,
+                    token_type: 4, // KEYWORD
+                    modifiers: 0,
+                });
+                // context name
+                tokens.push(RawToken {
+                    span: ctx.name.span,
+                    token_type: 0, // FUNCTION (treat context like a task definition)
+                    modifiers: 1,  // DEFINITION
+                });
+                // annotations within context
+                for ann in &ctx.annotations {
+                    tokens.push(RawToken {
+                        span: ann.node.at_span,
+                        token_type: 2, // DECORATOR
+                        modifiers: 0,
+                    });
+                    collect_annotation_tokens(&ann.node.kind, &mut tokens);
+                }
+                // @end
+                if let Some(close) = ctx.close_span {
+                    tokens.push(RawToken {
+                        span: close,
+                        token_type: 4, // KEYWORD
+                        modifiers: 0,
+                    });
+                }
+            }
+
             Item::SetDirective(set) => {
                 // set keyword
                 tokens.push(RawToken {
@@ -645,6 +679,13 @@ fn collect_annotation_tokens(kind: &AnnotationKind, tokens: &mut Vec<RawToken>) 
             });
         }
         AnnotationKind::Join => {}
+        AnnotationKind::Use(context_name) => {
+            tokens.push(RawToken {
+                span: context_name.span,
+                token_type: 0, // FUNCTION (reference to context)
+                modifiers: 0,
+            });
+        }
         AnnotationKind::Unknown { name, rest } => {
             tokens.push(RawToken {
                 span: name.span,
@@ -784,11 +825,13 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
     // collect defined names
     let mut variables: Vec<&str> = Vec::new();
     let mut tasks: Vec<&str> = Vec::new();
+    let mut contexts: Vec<&str> = Vec::new();
 
     for item in &ast.items {
         match &item.node {
             Item::Variable(var) => variables.push(&var.name.node),
             Item::Task(task) => tasks.push(&task.name.node),
+            Item::ContextBlock(ctx) => contexts.push(&ctx.name.node),
             _ => {}
         }
     }
@@ -831,7 +874,7 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
 
         // if no space yet, complete annotation keywords
         if !after_at.contains(' ') {
-            return docs::ANNOTATION_NAMES
+            let mut items: Vec<CompletionItem> = docs::ANNOTATION_NAMES
                 .iter()
                 .filter_map(|name| {
                     docs::get_annotation_doc(name).map(|doc| CompletionItem {
@@ -842,10 +885,37 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
                     })
                 })
                 .collect();
+            // add context-related annotations
+            items.push(CompletionItem {
+                label: "use".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Apply a named context to this task".to_string()),
+                ..Default::default()
+            });
+            items.push(CompletionItem {
+                label: "context".to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("Define a named context block".to_string()),
+                ..Default::default()
+            });
+            return items;
         }
 
         // after keyword + space, complete options for that annotation
         let keyword = after_at.split_whitespace().next().unwrap_or("");
+
+        // special handling for @use - complete context names
+        if keyword == "use" {
+            return contexts
+                .iter()
+                .map(|name| CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some("context".to_string()),
+                    ..Default::default()
+                })
+                .collect();
+        }
         if let Some(doc) = docs::get_annotation_doc(keyword) {
             // collect already-used options to avoid duplicates
             let used_opts: std::collections::HashSet<&str> = after_at
@@ -1207,6 +1277,87 @@ fn check_undefined_tasks(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
                     });
                 }
             }
+        }
+    }
+
+    diagnostics
+}
+
+// ============================================================================
+// Context validation
+// ============================================================================
+
+fn check_undefined_contexts(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // collect all defined context names
+    let defined_contexts: HashSet<&str> = ast
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::ContextBlock(ctx) => Some(ctx.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // check all @use annotations
+    for item in &ast.items {
+        if let Item::Task(task) = &item.node {
+            for ann in &task.annotations {
+                if let AnnotationKind::Use(ctx_name) = &ann.node.kind {
+                    if !defined_contexts.contains(ctx_name.node.as_str()) {
+                        diagnostics.push(Diagnostic {
+                            range: span_to_range(source, ctx_name.span),
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            source: Some("dagrun".to_string()),
+                            message: format!("undefined context '{}'", ctx_name.node),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn check_unused_contexts(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // collect all defined contexts with their spans
+    let mut defined_contexts: HashMap<&str, Span> = HashMap::new();
+    for item in &ast.items {
+        if let Item::ContextBlock(ctx) = &item.node {
+            defined_contexts.insert(&ctx.name.node, ctx.name.span);
+        }
+    }
+
+    // "default" is implicitly used by all tasks without @use
+    let mut used_contexts: HashSet<&str> = HashSet::new();
+    used_contexts.insert("default");
+
+    // collect explicitly used contexts via @use
+    for item in &ast.items {
+        if let Item::Task(task) = &item.node {
+            for ann in &task.annotations {
+                if let AnnotationKind::Use(ctx_name) = &ann.node.kind {
+                    used_contexts.insert(&ctx_name.node);
+                }
+            }
+        }
+    }
+
+    // report unused contexts (except "default" which is always considered used)
+    for (name, span) in &defined_contexts {
+        if *name != "default" && !used_contexts.contains(*name) {
+            diagnostics.push(Diagnostic {
+                range: span_to_range(source, *span),
+                severity: Some(DiagnosticSeverity::WARNING),
+                source: Some("dagrun".to_string()),
+                message: format!("unused context '{}'", name),
+                ..Default::default()
+            });
         }
     }
 
@@ -1718,6 +1869,12 @@ fn get_annotation_hover(
         AnnotationKind::Extern(_) => docs::EXTERN.to_markdown(),
         AnnotationKind::PipeFrom(_) => docs::PIPE_FROM.to_markdown(),
         AnnotationKind::Join => docs::JOIN.to_markdown(),
+        AnnotationKind::Use(ctx_name) => {
+            format!(
+                "**@use** `{}`\n\nApply annotations from the named context to this task.",
+                ctx_name.node
+            )
+        }
         AnnotationKind::Unknown { name, .. } => {
             format!("**Unknown annotation:** `@{}`", name.node)
         }
@@ -1993,6 +2150,20 @@ fn collect_document_symbols(source: &str, ast: &SourceFile) -> Vec<SymbolInforma
                 symbols.push(SymbolInformation {
                     name: task.name.node.clone(),
                     kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri: Url::parse("file:///").unwrap(),
+                        range: span_to_range(source, item.span),
+                    },
+                    container_name: None,
+                });
+            }
+            Item::ContextBlock(ctx) => {
+                #[allow(deprecated)]
+                symbols.push(SymbolInformation {
+                    name: format!("@context {}", ctx.name.node),
+                    kind: SymbolKind::NAMESPACE,
                     tags: None,
                     deprecated: None,
                     location: Location {

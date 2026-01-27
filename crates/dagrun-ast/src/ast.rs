@@ -16,6 +16,8 @@ pub enum Item {
     Task(TaskDecl),
     /// Lua block: `@lua ... @end`
     LuaBlock(LuaBlock),
+    /// Context block: `@context name ... @end`
+    ContextBlock(ContextBlock),
     /// Set directive: `set key := value`
     SetDirective(SetDirective),
     /// Comment line (preserved for documentation)
@@ -215,6 +217,9 @@ pub enum AnnotationKind {
     /// `@k8s-forward local:resource:remote`
     K8sForward(PortForwardAnnotation),
 
+    /// `@use contextname`
+    Use(Spanned<String>),
+
     /// Unknown annotation (preserved for error recovery/linting)
     Unknown {
         name: Spanned<String>,
@@ -281,6 +286,22 @@ pub struct LuaBlock {
     pub open_span: Span,
     /// Raw Lua source code
     pub content: Spanned<String>,
+    /// `@end` token span (may be missing)
+    pub close_span: Option<Span>,
+}
+
+// ============================================================================
+// Context Blocks
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct ContextBlock {
+    /// `@context` token span
+    pub open_span: Span,
+    /// Context name (e.g., "default", "remote")
+    pub name: Spanned<String>,
+    /// Annotations within this context
+    pub annotations: Vec<Spanned<Annotation>>,
     /// `@end` token span (may be missing)
     pub close_span: Option<Span>,
 }

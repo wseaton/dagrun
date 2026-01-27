@@ -1,4 +1,10 @@
-use crate::ast::*;
+use crate::ast::{
+    Annotation, AnnotationKind, BodyLine, CommandLine, CommandSegment, Comment,
+    ConfigMountAnnotation, ContextBlock, Dependency, FileTransferAnnotation, Interpolation, Item,
+    K8sAnnotation, KeyValue, LuaBlock, Parameter, ParameterDefault, PortForwardAnnotation,
+    ServiceAnnotation, SetDirective, Shebang, ShellExpansion, SourceFile, SshAnnotation, TaskBody,
+    TaskDecl, VariableDecl, VariableValue,
+};
 use crate::error::{ParseError, ParseErrorKind};
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::{Span, Spanned};
@@ -135,12 +141,15 @@ impl<'a> Parser<'a> {
             }
 
             TokenKind::At => {
-                // annotation or @lua block at line start
+                // annotation or @lua/@context block at line start
                 let at_span = tok.span;
                 self.advance();
                 if let TokenKind::Identifier(name) = &self.peek().kind {
                     if name == "lua" {
                         return self.parse_lua_block(at_span, pending_annotations);
+                    }
+                    if name == "context" {
+                        return self.parse_context_block(at_span, pending_annotations);
                     }
                     // regular annotation
                     let ann = self.parse_annotation(at_span)?;
@@ -260,6 +269,10 @@ impl<'a> Parser<'a> {
             "k8s-forward" => {
                 let pf = self.parse_port_forward()?;
                 Ok(AnnotationKind::K8sForward(pf))
+            }
+            "use" => {
+                let context_name = self.parse_rest_of_line_trimmed();
+                Ok(AnnotationKind::Use(context_name))
             }
             _ => {
                 let rest = if self.at_line_end() {
@@ -900,6 +913,90 @@ impl<'a> Parser<'a> {
         )))
     }
 
+    fn parse_context_block(
+        &mut self,
+        at_span: Span,
+        pending_annotations: &mut Vec<Spanned<Annotation>>,
+    ) -> Result<Option<Spanned<Item>>, ParseError> {
+        if !pending_annotations.is_empty() {
+            for ann in pending_annotations.drain(..) {
+                self.errors.push(ParseError::new(
+                    ParseErrorKind::OrphanedAnnotation,
+                    ann.span,
+                    "annotation before context block",
+                ));
+            }
+        }
+
+        // consume "context"
+        self.advance();
+        self.skip_whitespace();
+
+        // parse context name
+        let name = self.parse_identifier()?;
+
+        self.skip_to_newline();
+        if !self.at_end() && self.check(TokenKind::Newline) {
+            self.advance();
+        }
+
+        let mut annotations = Vec::new();
+        let mut close_span = None;
+
+        while !self.at_end() {
+            self.skip_whitespace();
+
+            // check for @end or another annotation
+            if self.check(TokenKind::At) {
+                let ann_at_span = self.advance().span;
+                if let TokenKind::Identifier(ann_name) = &self.peek().kind {
+                    if ann_name == "end" {
+                        let end_span = self.advance().span;
+                        close_span = Some(ann_at_span.merge(end_span));
+                        break;
+                    }
+                    // parse annotation within context
+                    let ann = self.parse_annotation(ann_at_span)?;
+                    annotations.push(ann);
+                    self.skip_to_newline();
+                    if !self.at_end() && self.check(TokenKind::Newline) {
+                        self.advance();
+                    }
+                    continue;
+                }
+            }
+
+            // skip empty lines
+            if self.check(TokenKind::Newline) {
+                self.advance();
+                continue;
+            }
+
+            // unexpected content
+            break;
+        }
+
+        if close_span.is_none() {
+            self.errors.push(ParseError::new(
+                ParseErrorKind::UnclosedLuaBlock,
+                at_span,
+                "context block missing @end",
+            ));
+        }
+
+        let full_span = at_span.merge(close_span.unwrap_or(name.span));
+
+        Ok(Some(Spanned::new(
+            Item::ContextBlock(ContextBlock {
+                open_span: at_span,
+                name,
+                annotations,
+                close_span,
+            }),
+            full_span,
+        )))
+    }
+
     fn parse_set_directive(
         &mut self,
         set_span: Span,
@@ -1356,6 +1453,46 @@ mod tests {
             assert!(task.parameters[0].node.default.is_none());
             assert_eq!(task.parameters[1].node.name.node, "version");
             assert!(task.parameters[1].node.default.is_some());
+        } else {
+            panic!("expected task");
+        }
+    }
+
+    #[test]
+    fn parse_context_block() {
+        let source = "@context default\n@ssh host=user@host\n@timeout 5m\n@end\n";
+        let (file, errors) = parse(source);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+
+        if let Item::ContextBlock(ctx) = &file.items[0].node {
+            assert_eq!(ctx.name.node, "default");
+            assert_eq!(ctx.annotations.len(), 2);
+            assert!(matches!(
+                ctx.annotations[0].node.kind,
+                AnnotationKind::Ssh(_)
+            ));
+            assert!(matches!(
+                ctx.annotations[1].node.kind,
+                AnnotationKind::Timeout(_)
+            ));
+        } else {
+            panic!("expected context block, got {:?}", file.items[0].node);
+        }
+    }
+
+    #[test]
+    fn parse_use_annotation() {
+        let source = "@use remote\ntask:\n\techo hi";
+        let (file, errors) = parse(source);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+
+        if let Item::Task(task) = &file.items[0].node {
+            assert_eq!(task.annotations.len(), 1);
+            if let AnnotationKind::Use(name) = &task.annotations[0].node.kind {
+                assert_eq!(name.node, "remote");
+            } else {
+                panic!("expected Use annotation");
+            }
         } else {
             panic!("expected task");
         }

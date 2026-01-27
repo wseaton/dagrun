@@ -5,7 +5,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::Span;
-use crate::ast::{self, AnnotationKind, BodyLine, CommandSegment, Dependency, Item, VariableValue};
+use crate::Spanned;
+use crate::ast::{
+    self, Annotation, AnnotationKind, BodyLine, CommandSegment, Dependency, Item, VariableValue,
+};
 use crate::parser;
 use crate::semantic::{
     Config, ConfigMount, DotenvSettings, FileTransfer, K8sConfig, K8sMode, LogOutput, PortForward,
@@ -27,15 +30,20 @@ pub fn parse_config(source: &str) -> Result<Config, ParseConfigError> {
 
     let mut ctx = Context::new(source);
 
-    // first pass: collect variables
+    // first pass: collect variables and contexts
     for item in &ast.items {
-        if let Item::Variable(var) = &item.node {
-            match ctx.eval_variable_value(&var.value.node) {
+        match &item.node {
+            Item::Variable(var) => match ctx.eval_variable_value(&var.value.node) {
                 Ok(value) => {
                     ctx.variables.insert(var.name.node.clone(), value);
                 }
                 Err(e) => errors.push(e),
+            },
+            Item::ContextBlock(context) => {
+                ctx.contexts
+                    .insert(context.name.node.clone(), context.annotations.clone());
             }
+            _ => {}
         }
     }
 
@@ -56,7 +64,7 @@ pub fn parse_config(source: &str) -> Result<Config, ParseConfigError> {
             Item::SetDirective(set) => {
                 ctx.handle_set_directive(&set.key.node, &set.value.node);
             }
-            Item::Variable(_) | Item::Comment(_) => {}
+            Item::Variable(_) | Item::Comment(_) | Item::ContextBlock(_) => {}
         }
     }
 
@@ -107,8 +115,21 @@ struct Context<'a> {
     source: &'a str,
     variables: HashMap<String, String>,
     tasks: HashMap<String, Task>,
+    contexts: HashMap<String, Vec<Spanned<Annotation>>>,
     dotenv: DotenvSettings,
     lua_blocks: Vec<String>,
+}
+
+/// Accumulated state from processing annotations
+#[derive(Default)]
+struct AnnotationState {
+    timeout: Option<Duration>,
+    retry: u32,
+    pipe_from: Vec<String>,
+    join: bool,
+    ssh: Option<SshConfig>,
+    service: Option<ServiceConfig>,
+    k8s: Option<K8sConfig>,
 }
 
 impl<'a> Context<'a> {
@@ -117,6 +138,7 @@ impl<'a> Context<'a> {
             source,
             variables: HashMap::new(),
             tasks: HashMap::new(),
+            contexts: HashMap::new(),
             dotenv: DotenvSettings::default(),
             lua_blocks: Vec::new(),
         }
@@ -154,94 +176,28 @@ impl<'a> Context<'a> {
         // lower parameters
         let parameters = self.lower_task_parameters(&task_decl.parameters);
 
-        let mut timeout: Option<Duration> = None;
-        let mut retry: u32 = 0;
-        let mut pipe_from: Vec<String> = Vec::new();
-        let mut join = false;
-        let mut ssh: Option<SshConfig> = None;
-        let mut service: Option<ServiceConfig> = None;
-        let mut k8s: Option<K8sConfig> = None;
+        let mut state = AnnotationState::default();
 
-        for ann in &task_decl.annotations {
-            match &ann.node.kind {
-                AnnotationKind::Timeout(val) => {
-                    let dur_str = self.substitute_variables(&val.node);
-                    timeout = Some(parse_duration(&dur_str).map_err(|e| ParseConfigError {
-                        span: val.span,
-                        message: e,
-                    })?);
+        // determine which context to use: explicit @use or implicit "default"
+        let context_name = task_decl
+            .annotations
+            .iter()
+            .find_map(|ann| {
+                if let AnnotationKind::Use(name) = &ann.node.kind {
+                    Some(name.node.clone())
+                } else {
+                    None
                 }
-                AnnotationKind::Retry(val) => {
-                    let val_str = self.substitute_variables(&val.node);
-                    retry = val_str.parse().map_err(|_| ParseConfigError {
-                        span: val.span,
-                        message: "invalid retry count".to_string(),
-                    })?;
-                }
-                AnnotationKind::PipeFrom(tasks) => {
-                    pipe_from = tasks.iter().map(|t| t.node.clone()).collect();
-                }
-                AnnotationKind::Join => {
-                    join = true;
-                }
-                AnnotationKind::Ssh(ssh_ann) => {
-                    ssh = Some(self.lower_ssh_annotation(ssh_ann));
-                }
-                AnnotationKind::Upload(ft) => {
-                    if let Some(ref mut s) = ssh {
-                        s.upload.push(self.lower_file_transfer(ft));
-                    }
-                }
-                AnnotationKind::Download(ft) => {
-                    if let Some(ref mut s) = ssh {
-                        s.download.push(self.lower_file_transfer(ft));
-                    }
-                }
-                AnnotationKind::Service(svc) => {
-                    service = Some(self.lower_service_annotation(svc, ServiceKind::Managed)?);
-                }
-                AnnotationKind::Extern(svc) => {
-                    service = Some(self.lower_service_annotation(svc, ServiceKind::External)?);
-                }
-                AnnotationKind::K8s(k8s_ann) => {
-                    k8s = Some(self.lower_k8s_annotation(k8s_ann)?);
-                }
-                AnnotationKind::K8sConfigmap(cm) => {
-                    if let Some(ref mut k) = k8s {
-                        k.configmaps.push(ConfigMount {
-                            name: cm.name.node.clone(),
-                            mount_path: cm.path.node.clone(),
-                        });
-                    }
-                }
-                AnnotationKind::K8sSecret(cm) => {
-                    if let Some(ref mut k) = k8s {
-                        k.secrets.push(ConfigMount {
-                            name: cm.name.node.clone(),
-                            mount_path: cm.path.node.clone(),
-                        });
-                    }
-                }
-                AnnotationKind::K8sUpload(ft) => {
-                    if let Some(ref mut k) = k8s {
-                        k.upload.push(self.lower_file_transfer(ft));
-                    }
-                }
-                AnnotationKind::K8sDownload(ft) => {
-                    if let Some(ref mut k) = k8s {
-                        k.download.push(self.lower_file_transfer(ft));
-                    }
-                }
-                AnnotationKind::K8sForward(pf) => {
-                    if let Some(ref mut k) = k8s
-                        && let Ok(forward) = self.lower_port_forward(pf)
-                    {
-                        k.forwards.push(forward);
-                    }
-                }
-                AnnotationKind::Unknown { .. } => {}
-            }
+            })
+            .unwrap_or_else(|| "default".to_string());
+
+        // apply context annotations first (if context exists)
+        if let Some(context_anns) = self.contexts.get(&context_name) {
+            self.apply_annotations(context_anns, &mut state)?;
         }
+
+        // then apply task-level annotations (these override context)
+        self.apply_annotations(&task_decl.annotations, &mut state)?;
 
         // extract dependencies
         let mut depends_on = Vec::new();
@@ -262,16 +218,106 @@ impl<'a> Context<'a> {
             run,
             depends_on,
             service_deps,
-            pipe_from,
-            timeout,
-            retry,
-            join,
-            ssh,
-            k8s,
-            service,
+            pipe_from: state.pipe_from,
+            timeout: state.timeout,
+            retry: state.retry,
+            join: state.join,
+            ssh: state.ssh,
+            k8s: state.k8s,
+            service: state.service,
             shebang,
             span: Some(task_span),
         })
+    }
+
+    fn apply_annotations(
+        &self,
+        annotations: &[Spanned<Annotation>],
+        state: &mut AnnotationState,
+    ) -> Result<(), ParseConfigError> {
+        for ann in annotations {
+            match &ann.node.kind {
+                AnnotationKind::Timeout(val) => {
+                    let dur_str = self.substitute_variables(&val.node);
+                    state.timeout =
+                        Some(parse_duration(&dur_str).map_err(|e| ParseConfigError {
+                            span: val.span,
+                            message: e,
+                        })?);
+                }
+                AnnotationKind::Retry(val) => {
+                    let val_str = self.substitute_variables(&val.node);
+                    state.retry = val_str.parse().map_err(|_| ParseConfigError {
+                        span: val.span,
+                        message: "invalid retry count".to_string(),
+                    })?;
+                }
+                AnnotationKind::PipeFrom(tasks) => {
+                    state.pipe_from = tasks.iter().map(|t| t.node.clone()).collect();
+                }
+                AnnotationKind::Join => {
+                    state.join = true;
+                }
+                AnnotationKind::Ssh(ssh_ann) => {
+                    state.ssh = Some(self.lower_ssh_annotation(ssh_ann));
+                }
+                AnnotationKind::Upload(ft) => {
+                    if let Some(ref mut s) = state.ssh {
+                        s.upload.push(self.lower_file_transfer(ft));
+                    }
+                }
+                AnnotationKind::Download(ft) => {
+                    if let Some(ref mut s) = state.ssh {
+                        s.download.push(self.lower_file_transfer(ft));
+                    }
+                }
+                AnnotationKind::Service(svc) => {
+                    state.service = Some(self.lower_service_annotation(svc, ServiceKind::Managed)?);
+                }
+                AnnotationKind::Extern(svc) => {
+                    state.service =
+                        Some(self.lower_service_annotation(svc, ServiceKind::External)?);
+                }
+                AnnotationKind::K8s(k8s_ann) => {
+                    state.k8s = Some(self.lower_k8s_annotation(k8s_ann)?);
+                }
+                AnnotationKind::K8sConfigmap(cm) => {
+                    if let Some(ref mut k) = state.k8s {
+                        k.configmaps.push(ConfigMount {
+                            name: cm.name.node.clone(),
+                            mount_path: cm.path.node.clone(),
+                        });
+                    }
+                }
+                AnnotationKind::K8sSecret(cm) => {
+                    if let Some(ref mut k) = state.k8s {
+                        k.secrets.push(ConfigMount {
+                            name: cm.name.node.clone(),
+                            mount_path: cm.path.node.clone(),
+                        });
+                    }
+                }
+                AnnotationKind::K8sUpload(ft) => {
+                    if let Some(ref mut k) = state.k8s {
+                        k.upload.push(self.lower_file_transfer(ft));
+                    }
+                }
+                AnnotationKind::K8sDownload(ft) => {
+                    if let Some(ref mut k) = state.k8s {
+                        k.download.push(self.lower_file_transfer(ft));
+                    }
+                }
+                AnnotationKind::K8sForward(pf) => {
+                    if let Some(ref mut k) = state.k8s
+                        && let Ok(forward) = self.lower_port_forward(pf)
+                    {
+                        k.forwards.push(forward);
+                    }
+                }
+                AnnotationKind::Use(_) | AnnotationKind::Unknown { .. } => {}
+            }
+        }
+        Ok(())
     }
 
     fn lower_task_parameters(
@@ -664,5 +710,127 @@ svc:
         assert_eq!(task.parameters.len(), 1, "should have 1 parameter");
         assert_eq!(task.parameters[0].name, "name");
         assert_eq!(task.parameters[0].default, Some("world".to_string()));
+    }
+
+    #[test]
+    fn test_default_context_applied() {
+        let source = r#"
+@context default
+@ssh host=user@example.com workdir=/home/user
+@timeout 5m
+@end
+
+task1:
+    echo hello
+
+task2:
+    echo world
+"#;
+        let config = parse_config(source).unwrap();
+
+        let task1 = config.tasks.get("task1").unwrap();
+        assert!(
+            task1.ssh.is_some(),
+            "task1 should inherit ssh from default context"
+        );
+        assert_eq!(task1.ssh.as_ref().unwrap().host, "user@example.com");
+        assert_eq!(
+            task1.ssh.as_ref().unwrap().workdir,
+            Some("/home/user".to_string())
+        );
+        assert_eq!(task1.timeout, Some(Duration::from_secs(300)));
+
+        let task2 = config.tasks.get("task2").unwrap();
+        assert!(
+            task2.ssh.is_some(),
+            "task2 should inherit ssh from default context"
+        );
+        assert_eq!(task2.timeout, Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn test_task_overrides_context() {
+        let source = r#"
+@context default
+@timeout 5m
+@end
+
+@timeout 10m
+custom_timeout:
+    echo hello
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("custom_timeout").unwrap();
+        assert_eq!(
+            task.timeout,
+            Some(Duration::from_secs(600)),
+            "task-level annotation should override context"
+        );
+    }
+
+    #[test]
+    fn test_explicit_use_context() {
+        let source = r#"
+@context default
+@timeout 1m
+@end
+
+@context remote
+@ssh host=server@10.0.0.1 workdir=/app
+@timeout 10m
+@end
+
+default_task:
+    echo uses default
+
+@use remote
+remote_task:
+    echo uses remote
+"#;
+        let config = parse_config(source).unwrap();
+
+        let default_task = config.tasks.get("default_task").unwrap();
+        assert!(default_task.ssh.is_none(), "default context has no ssh");
+        assert_eq!(default_task.timeout, Some(Duration::from_secs(60)));
+
+        let remote_task = config.tasks.get("remote_task").unwrap();
+        assert!(remote_task.ssh.is_some(), "remote context has ssh");
+        assert_eq!(remote_task.ssh.as_ref().unwrap().host, "server@10.0.0.1");
+        assert_eq!(remote_task.timeout, Some(Duration::from_secs(600)));
+    }
+
+    #[test]
+    fn test_context_with_variable_interpolation() {
+        let source = r#"
+host := myserver@192.168.1.1
+workdir := /home/deploy
+
+@context default
+@ssh host={{host}} workdir={{workdir}}
+@end
+
+deploy:
+    ./deploy.sh
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("deploy").unwrap();
+        assert!(task.ssh.is_some());
+        assert_eq!(task.ssh.as_ref().unwrap().host, "myserver@192.168.1.1");
+        assert_eq!(
+            task.ssh.as_ref().unwrap().workdir,
+            Some("/home/deploy".to_string())
+        );
+    }
+
+    #[test]
+    fn test_no_context_defined() {
+        let source = r#"
+simple:
+    echo no context
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("simple").unwrap();
+        assert!(task.ssh.is_none());
+        assert!(task.timeout.is_none());
     }
 }
