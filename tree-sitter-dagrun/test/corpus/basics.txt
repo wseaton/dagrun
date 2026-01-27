@@ -1,0 +1,179 @@
+================================================================================
+Simple task
+================================================================================
+
+build:
+	cargo build
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    name: (identifier)
+    (task_body
+      (command_line
+        (command_text)))))
+
+================================================================================
+Task with dependencies
+================================================================================
+
+test: build lint
+	cargo test
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    name: (identifier)
+    (dependency_list
+      (dependency
+        task: (identifier))
+      (dependency
+        task: (identifier)))
+    (task_body
+      (command_line
+        (command_text)))))
+
+================================================================================
+Variable assignment
+================================================================================
+
+version := 1.0.0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (variable
+    name: (identifier)
+    value: (static_value)))
+
+================================================================================
+Shell expansion variable
+================================================================================
+
+hash := `git rev-parse HEAD`
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (variable
+    name: (identifier)
+    value: (shell_expansion
+      command: (shell_command))))
+
+================================================================================
+Task with annotation
+================================================================================
+
+@timeout 5m
+build:
+	cargo build
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    (annotation
+      name: (annotation_name)
+      args: (annotation_args
+        (plain_arg)))
+    name: (identifier)
+    (task_body
+      (command_line
+        (command_text)))))
+
+================================================================================
+Task with parameters
+================================================================================
+
+deploy env version="latest":
+	echo {{env}} {{version}}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    name: (identifier)
+    (parameter
+      name: (identifier))
+    (parameter
+      name: (identifier)
+      (parameter_default
+        (quoted_string)))
+    (task_body
+      (command_line
+        (command_text)
+        (interpolation
+          name: (identifier))
+        (command_text)
+        (interpolation
+          name: (identifier))))))
+
+================================================================================
+Python shebang task
+================================================================================
+
+analyze:
+	#!/usr/bin/env python3
+	import sys
+	print(sys.version)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    name: (identifier)
+    (task_body
+      (shebang
+        interpreter: (shebang_path)
+        args: (shebang_args))
+      (command_line
+        (command_text))
+      (command_line
+        (command_text)))))
+
+================================================================================
+SSH annotation
+================================================================================
+
+@ssh host=user@remote.com workdir=/home/user
+deploy:
+	./run.sh
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    (annotation
+      name: (annotation_name)
+      args: (annotation_args
+        (key_value
+          key: (identifier)
+          value: (key_value_value))
+        (key_value
+          key: (identifier)
+          value: (key_value_value))))
+    name: (identifier)
+    (task_body
+      (command_line
+        (command_text)))))
+
+================================================================================
+Comment
+================================================================================
+
+# this is a comment
+build:
+	echo hi
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (comment
+    (comment_text))
+  (task
+    name: (identifier)
+    (task_body
+      (command_line
+        (command_text)))))

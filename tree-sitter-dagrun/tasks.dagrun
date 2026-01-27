@@ -1,0 +1,33 @@
+# tree-sitter-dagrun build tasks
+
+# install npm dependencies
+setup:
+	npm install
+
+# generate the parser from grammar.js
+generate: setup
+	npx tree-sitter generate
+
+# run the test corpus
+test: generate
+	npx tree-sitter test
+
+# parse a file (pass file= parameter)
+parse file: generate
+	npx tree-sitter parse {{file}}
+
+# highlight a file to check queries
+highlight file: generate
+	npx tree-sitter highlight {{file}}
+
+# full rebuild from scratch
+rebuild:
+	rm -rf node_modules src/parser.c src/tree_sitter build
+	npm install
+	npx tree-sitter generate
+
+# compile and install parser to neovim
+install: generate
+	cc -shared -fPIC -o dagrun.so src/parser.c src/scanner.c -I src
+	cp dagrun.so ~/.local/share/nvim/lazy/nvim-treesitter/parser/
+	echo "installed dagrun.so to nvim-treesitter"

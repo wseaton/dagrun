@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "dagrun",
+      "scope": "source.dagrun",
+      "injection-regex": "^dagrun$",
+      "file-types": ["dagrun", "dr"],
+      "highlights": "queries/highlights.scm",
+      "injections": "queries/injections.scm",
+      "path": "."
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0"
+  }
+}

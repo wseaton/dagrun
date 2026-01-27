@@ -1,0 +1,24 @@
+{
+  "name": "tree-sitter-dagrun",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for dagrun task files",
+  "keywords": ["tree-sitter", "parser", "dagrun"],
+  "license": "MIT",
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.0"
+  },
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.dagrun",
+      "injection-regex": "^dagrun$",
+      "file-types": ["dagrun", "dr"],
+      "highlights": "queries/highlights.scm",
+      "injections": "queries/injections.scm"
+    }
+  ]
+}

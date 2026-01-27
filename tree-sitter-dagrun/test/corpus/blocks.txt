@@ -1,0 +1,74 @@
+================================================================================
+Lua block
+================================================================================
+
+@lua
+function greet(name)
+  return "Hello, " .. name
+end
+@end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (lua_block
+    (lua_content)))
+
+================================================================================
+Context block
+================================================================================
+
+@context remote
+@ssh host=user@server.com
+@timeout 10m
+@end
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_block
+    name: (identifier)
+    (annotation
+      name: (annotation_name)
+      args: (annotation_args
+        (key_value
+          key: (identifier)
+          value: (key_value_value))))
+    (annotation
+      name: (annotation_name)
+      args: (annotation_args
+        (plain_arg)))))
+
+================================================================================
+Set directive
+================================================================================
+
+set shell := bash
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (set_directive
+    key: (identifier)
+    value: (static_value)))
+
+================================================================================
+File transfer annotation
+================================================================================
+
+@upload ./local/file.py:/remote/file.py
+task:
+	python /remote/file.py
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (task
+    (annotation
+      name: (annotation_name)
+      args: (annotation_args
+        (file_transfer)))
+    name: (identifier)
+    (task_body
+      (command_line
+        (command_text)))))
