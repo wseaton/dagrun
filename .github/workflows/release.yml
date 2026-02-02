@@ -33,8 +33,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dagrun-linux-amd64
-          path: target/release/dagrun
+          name: dr-linux-amd64
+          path: target/release/dr
 
   build-macos:
     name: Build ${{ matrix.target }}
@@ -43,9 +43,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            asset_name: dagrun-darwin-amd64
+            asset_name: dr-darwin-amd64
           - target: aarch64-apple-darwin
-            asset_name: dagrun-darwin-arm64
+            asset_name: dr-darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/dagrun
+          path: target/${{ matrix.target }}/release/dr
 
   release:
     name: Create Release
@@ -88,10 +88,10 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          for dir in artifacts/dagrun-*; do
+          for dir in artifacts/dr-*; do
             if [ -d "$dir" ]; then
               asset_name=$(basename "$dir")
-              cp "$dir/dagrun" "release/$asset_name"
+              cp "$dir/dr" "release/$asset_name"
               chmod +x "release/$asset_name"
             fi
           done
