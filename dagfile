@@ -1,16 +1,16 @@
-# dagrun recipes for justflow/dagrun project
+# dr recipes for justflow project
 
-# reinstall the main dagrun binary locally
+# reinstall the main dr binary locally
 reinstall:
     cargo install --path . --force
 
-# reinstall the dagrun-lsp server locally
+# reinstall the dr-lsp server locally
 reinstall-lsp:
-    cargo install --path crates/dagrun-lsp --force
+    cargo install --path crates/dr-lsp --force
 
-# upgrade both dagrun and lsp
+# upgrade both dr and lsp
 upgrade-all: reinstall reinstall-lsp
-    echo "upgraded dagrun and dagrun-lsp"
+    echo "upgraded dr and dr-lsp"
 
 # bump version using cargo-edit
 bump-version version:

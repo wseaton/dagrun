@@ -1,4 +1,4 @@
-//! Integration tests for dagrun
+//! Integration tests for dr (DAG runner)
 //!
 //! These tests run the actual binary and verify end-to-end behavior.
 //! K8s tests require `kind` to be installed and running.

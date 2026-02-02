@@ -19,7 +19,7 @@ use crate::dag::TaskGraph;
 use crate::k8s::{self, ResourceTracker};
 use crate::service::ServiceManager;
 use crate::ssh::{self, SessionCache};
-use dagrun_ast::{FileTransfer, Shebang, SshConfig, Task};
+use dr_ast::{FileTransfer, Shebang, SshConfig, Task};
 use glob::glob;
 use shell_escape::escape;
 use std::io::Write;

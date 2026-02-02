@@ -18,7 +18,7 @@ use tracing::info;
 
 use crate::progress::task_color;
 
-use dagrun_ast::SshConfig;
+use dr_ast::SshConfig;
 
 /// Cache of SSH sessions for connection reuse
 pub type SessionCache = Arc<RwLock<HashMap<String, Arc<Session>>>>;

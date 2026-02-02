@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::env::service_env_vars;
 use crate::ssh::{self, SessionCache};
-use dagrun_ast::{LogOutput, ReadinessCheck, ServiceConfig, ServiceKind, SshConfig, Task};
+use dr_ast::{LogOutput, ReadinessCheck, ServiceConfig, ServiceKind, SshConfig, Task};
 
 /// Service state machine
 #[derive(Debug, Clone, PartialEq)]

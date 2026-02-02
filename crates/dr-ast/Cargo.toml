@@ -1,5 +1,5 @@
 [package]
-name = "dagrun-ast"
+name = "dr-ast"
 version.workspace = true
 edition.workspace = true
 

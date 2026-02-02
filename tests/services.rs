@@ -7,12 +7,12 @@ use std::net::TcpListener;
 use tempfile::TempDir;
 
 #[allow(deprecated)]
-fn dagrun_cmd() -> Command {
-    Command::cargo_bin("dagrun").unwrap()
+fn dr_cmd() -> Command {
+    Command::cargo_bin("dr").unwrap()
 }
 
-fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun");
+fn create_dagfile(dir: &TempDir, content: &str) -> std::path::PathBuf {
+    let path = dir.path().join("dagfile");
     fs::write(&path, content).unwrap();
     path
 }
@@ -29,7 +29,7 @@ fn find_free_port() -> u16 {
 fn test_managed_service_tcp_ready() {
     let port = find_free_port();
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -44,7 +44,7 @@ use_server: service:tcp_server
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -59,7 +59,7 @@ use_server: service:tcp_server
 fn test_managed_service_http_ready() {
     let port = find_free_port();
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -74,7 +74,7 @@ use_http: service:http_server
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -92,7 +92,7 @@ fn test_managed_service_command_ready() {
     let _ = std::fs::remove_file(marker);
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -107,7 +107,7 @@ use_file: service:file_creator
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -139,7 +139,7 @@ fn test_external_service() {
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -153,7 +153,7 @@ use_external: service:external_svc
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -173,7 +173,7 @@ use_external: service:external_svc
 fn test_service_timeout_fails() {
     let port = find_free_port();
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -188,7 +188,7 @@ use_never: service:never_ready
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -203,7 +203,7 @@ fn test_multiple_service_deps() {
     let port1 = find_free_port();
     let port2 = find_free_port();
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -223,7 +223,7 @@ use_both: service:svc1 service:svc2
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -242,7 +242,7 @@ fn test_service_with_preflight() {
 
     let dir = TempDir::new().unwrap();
     let port = find_free_port();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -258,7 +258,7 @@ use_preflight: service:with_preflight
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -278,7 +278,7 @@ use_preflight: service:with_preflight
 fn test_service_preflight_fails() {
     let port = find_free_port();
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -293,7 +293,7 @@ use_bad_preflight: service:bad_preflight
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")

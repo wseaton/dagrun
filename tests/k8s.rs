@@ -12,12 +12,12 @@ use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
 #[allow(deprecated)]
-fn dagrun_cmd() -> Command {
-    Command::cargo_bin("dagrun").unwrap()
+fn dr_cmd() -> Command {
+    Command::cargo_bin("dr").unwrap()
 }
 
-fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun");
+fn create_dagfile(dir: &TempDir, content: &str) -> std::path::PathBuf {
+    let path = dir.path().join("dagfile");
     fs::write(&path, content).unwrap();
     path
 }
@@ -126,7 +126,7 @@ fn test_k8s_job_simple() {
     ensure_namespace(ns);
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -139,7 +139,7 @@ hello:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -165,7 +165,7 @@ fn test_k8s_job_with_resources() {
     ensure_namespace(ns);
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -179,7 +179,7 @@ with_resources:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -206,7 +206,7 @@ fn test_k8s_job_with_configmap() {
     create_configmap(ns, "test-config", "key: value");
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -220,7 +220,7 @@ read_config:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -246,7 +246,7 @@ fn test_k8s_job_failure() {
     ensure_namespace(ns);
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -259,7 +259,7 @@ fail_job:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -292,7 +292,7 @@ fn test_k8s_exec_by_selector() {
     }
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -305,7 +305,7 @@ exec_in_pod:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -336,7 +336,7 @@ fn test_k8s_exec_by_pod_name() {
     }
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -349,7 +349,7 @@ exec_named:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -383,7 +383,7 @@ fn test_k8s_exec_with_upload() {
     let script = dir.path().join("test-script.sh");
     fs::write(&script, "#!/bin/sh\necho 'script executed'").unwrap();
 
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -398,7 +398,7 @@ upload_and_run:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -431,7 +431,7 @@ fn test_k8s_exec_with_download() {
     let dir = TempDir::new().unwrap();
     let output_file = dir.path().join("output.txt");
 
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -446,7 +446,7 @@ generate_and_download:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -493,7 +493,7 @@ data:
 "#;
     fs::write(manifest_dir.join("configmap.yaml"), manifest).unwrap();
 
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -506,7 +506,7 @@ apply_config:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -574,7 +574,7 @@ spec:
 "#;
     fs::write(manifest_dir.join("deployment.yaml"), manifest).unwrap();
 
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -588,7 +588,7 @@ deploy_with_wait:
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -616,7 +616,7 @@ fn test_k8s_lua_dynamic_jobs() {
     ensure_namespace(ns);
 
     let dir = TempDir::new().unwrap();
-    let config_path = dir.path().join("dagrun.lua");
+    let config_path = dir.path().join("dagfile.lua");
 
     let lua_config = format!(
         r#"
@@ -642,7 +642,7 @@ task("all-done", {{
     );
     fs::write(&config_path, lua_config).unwrap();
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config_path)
         .arg("run")
@@ -674,7 +674,7 @@ fn test_k8s_mixed_local_and_k8s() {
     ensure_namespace(ns);
 
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -693,7 +693,7 @@ local_finish: k8s_process
         ),
     );
 
-    let result = dagrun_cmd()
+    let result = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")

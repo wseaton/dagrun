@@ -6,18 +6,18 @@ use std::fs;
 use tempfile::TempDir;
 
 #[allow(deprecated)]
-fn dagrun_cmd() -> Command {
-    Command::cargo_bin("dagrun").unwrap()
+fn dr_cmd() -> Command {
+    Command::cargo_bin("dr").unwrap()
 }
 
 fn create_lua_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun.lua");
+    let path = dir.path().join("dagfile.lua");
     fs::write(&path, content).unwrap();
     path
 }
 
-fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun");
+fn create_dagfile(dir: &TempDir, content: &str) -> std::path::PathBuf {
+    let path = dir.path().join("dagfile");
     fs::write(&path, content).unwrap();
     path
 }
@@ -34,7 +34,7 @@ task("hello", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -61,7 +61,7 @@ task("test", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -91,7 +91,7 @@ task("all", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -123,7 +123,7 @@ task("flaky", {{
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -155,7 +155,7 @@ task("final", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -178,7 +178,7 @@ task("show-home", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -200,7 +200,7 @@ task("show-result", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -211,9 +211,9 @@ task("show-result", {
 }
 
 #[test]
-fn test_embedded_lua_in_dagrun() {
+fn test_embedded_lua_in_dagfile() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 build:
@@ -233,7 +233,7 @@ final: worker-1 worker-2 worker-3
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -261,7 +261,7 @@ end
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("list")
@@ -283,7 +283,7 @@ task("valid", {
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("validate")

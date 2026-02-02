@@ -27,7 +27,7 @@ use kube::config::{KubeConfigOptions, Kubeconfig};
 use kube::runtime::wait::{await_condition, conditions};
 use kube::{Client, Config};
 
-use dagrun_ast::{K8sConfig, K8sMode, PortForward};
+use dr_ast::{K8sConfig, K8sMode, PortForward};
 use tokio::process::Child;
 
 #[derive(Error, Debug)]

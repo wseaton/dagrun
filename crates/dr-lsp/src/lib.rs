@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-use dagrun_ast::{
+use dr_ast::{
     AnnotationKind, BodyLine, CommandSegment, Dependency, Item, KeyValue, ParseError, SourceFile,
     Span, Spanned, parse,
 };
@@ -39,7 +39,7 @@ enum BodyLanguage {
     Python,
 }
 
-fn detect_language(body: &dagrun_ast::TaskBody) -> BodyLanguage {
+fn detect_language(body: &dr_ast::TaskBody) -> BodyLanguage {
     for line in &body.lines {
         if let BodyLine::Shebang(shebang) = &line.node {
             let interp = &shebang.interpreter.node;
@@ -465,14 +465,14 @@ fn collect_semantic_tokens(_source: &str, ast: &SourceFile) -> Vec<RawToken> {
                     // highlight default value if present
                     if let Some(default) = &param.node.default {
                         match &default.node {
-                            dagrun_ast::ParameterDefault::Literal(_) => {
+                            dr_ast::ParameterDefault::Literal(_) => {
                                 tokens.push(RawToken {
                                     span: default.span,
                                     token_type: 5, // STRING
                                     modifiers: 0,
                                 });
                             }
-                            dagrun_ast::ParameterDefault::Variable(interp) => {
+                            dr_ast::ParameterDefault::Variable(interp) => {
                                 tokens.push(RawToken {
                                     span: interp.open_span,
                                     token_type: 6, // OPERATOR
@@ -768,7 +768,7 @@ fn collect_annotation_tokens(kind: &AnnotationKind, tokens: &mut Vec<RawToken>) 
     }
 }
 
-fn collect_kv_tokens(opts: &[Spanned<dagrun_ast::KeyValue>], tokens: &mut Vec<RawToken>) {
+fn collect_kv_tokens(opts: &[Spanned<dr_ast::KeyValue>], tokens: &mut Vec<RawToken>) {
     for kv in opts {
         tokens.push(RawToken {
             span: kv.node.key.span,
@@ -823,7 +823,7 @@ fn to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
     Diagnostic {
         range: span_to_range(source, error.span),
         severity: Some(DiagnosticSeverity::ERROR),
-        source: Some("dagrun".to_string()),
+        source: Some("dr".to_string()),
         message: error.message.clone(),
         ..Default::default()
     }
@@ -933,7 +933,7 @@ fn get_completions(source: &str, ast: &SourceFile, pos: Position) -> Vec<Complet
     // context: after @ - complete annotation keywords or options
     let trimmed = before_cursor.trim_start();
     if trimmed.starts_with('@') {
-        use dagrun_ast::docs;
+        use dr_ast::docs;
 
         let after_at = &trimmed[1..];
 
@@ -1194,7 +1194,7 @@ fn check_undefined_variables(source: &str, ast: &SourceFile) -> Vec<Diagnostic> 
                                         diagnostics.push(Diagnostic {
                                             range: span_to_range(source, interp.name.span),
                                             severity: Some(DiagnosticSeverity::ERROR),
-                                            source: Some("dagrun".to_string()),
+                                            source: Some("dr".to_string()),
                                             message: format!("undefined variable '{}'", name),
                                             ..Default::default()
                                         });
@@ -1225,7 +1225,7 @@ fn check_annotation_vars(
                 diagnostics.push(Diagnostic {
                     range: span_to_range(source, var_ref.span),
                     severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("dagrun".to_string()),
+                    source: Some("dr".to_string()),
                     message: format!("undefined variable '{}'", var_ref.name),
                     ..Default::default()
                 });
@@ -1336,7 +1336,7 @@ fn check_undefined_tasks(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
                     diagnostics.push(Diagnostic {
                         range: span_to_range(source, dep.span),
                         severity: Some(DiagnosticSeverity::ERROR),
-                        source: Some("dagrun".to_string()),
+                        source: Some("dr".to_string()),
                         message: format!("undefined task '{}'", name),
                         ..Default::default()
                     });
@@ -1374,7 +1374,7 @@ fn check_undefined_contexts(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
                         diagnostics.push(Diagnostic {
                             range: span_to_range(source, ctx_name.span),
                             severity: Some(DiagnosticSeverity::ERROR),
-                            source: Some("dagrun".to_string()),
+                            source: Some("dr".to_string()),
                             message: format!("undefined context '{}'", ctx_name.node),
                             ..Default::default()
                         });
@@ -1419,7 +1419,7 @@ fn check_unused_contexts(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
             diagnostics.push(Diagnostic {
                 range: span_to_range(source, *span),
                 severity: Some(DiagnosticSeverity::WARNING),
-                source: Some("dagrun".to_string()),
+                source: Some("dr".to_string()),
                 message: format!("unused context '{}'", name),
                 ..Default::default()
             });
@@ -1471,7 +1471,7 @@ fn check_dependency_cycles(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
                 diagnostics.push(Diagnostic {
                     range: span_to_range(source, span),
                     severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("dagrun".to_string()),
+                    source: Some("dr".to_string()),
                     message: format!("dependency cycle detected: {}", cycle_str),
                     ..Default::default()
                 });
@@ -1524,7 +1524,7 @@ fn find_cycle<'a>(
 // Filesystem validation (paths, executables, interpreters)
 // ============================================================================
 
-fn is_shell_task_body(body: &dagrun_ast::TaskBody) -> bool {
+fn is_shell_task_body(body: &dr_ast::TaskBody) -> bool {
     detect_language(body) == BodyLanguage::Shell
 }
 
@@ -1614,7 +1614,7 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
                                 diagnostics.push(Diagnostic {
                                     range: span_to_range(source, ft.local.span),
                                     severity: Some(DiagnosticSeverity::WARNING),
-                                    source: Some("dagrun".to_string()),
+                                    source: Some("dr".to_string()),
                                     message: format!("file not found: {}", local_path),
                                     ..Default::default()
                                 });
@@ -1652,7 +1652,7 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
                                 diagnostics.push(Diagnostic {
                                     range: span_to_range(source, shebang.interpreter.span),
                                     severity: Some(DiagnosticSeverity::WARNING),
-                                    source: Some("dagrun".to_string()),
+                                    source: Some("dr".to_string()),
                                     message: format!("interpreter not found: {}", interp),
                                     ..Default::default()
                                 });
@@ -1688,7 +1688,7 @@ fn check_filesystem(source: &str, ast: &SourceFile, working_dir: Option<&Path>) 
                                             diagnostics.push(Diagnostic {
                                                 range: span_to_range(source, first_seg.span),
                                                 severity: Some(DiagnosticSeverity::WARNING),
-                                                source: Some("dagrun".to_string()),
+                                                source: Some("dr".to_string()),
                                                 message: format!(
                                                     "command not found in PATH: {}",
                                                     first_word
@@ -1755,7 +1755,7 @@ fn check_unused_variables(source: &str, ast: &SourceFile) -> Vec<Diagnostic> {
             diagnostics.push(Diagnostic {
                 range: span_to_range(source, *span),
                 severity: Some(DiagnosticSeverity::WARNING),
-                source: Some("dagrun".to_string()),
+                source: Some("dr".to_string()),
                 message: format!("unused variable '{}'", name),
                 ..Default::default()
             });
@@ -1925,7 +1925,7 @@ fn get_annotation_hover(
     span: Span,
     source: &str,
 ) -> Option<(String, Range)> {
-    use dagrun_ast::docs;
+    use dr_ast::docs;
 
     let doc = match kind {
         AnnotationKind::Ssh(_) => docs::SSH.to_markdown(),
@@ -1956,7 +1956,7 @@ fn get_annotation_hover(
     Some((doc, span_to_range(source, span)))
 }
 
-fn find_variable_def<'a>(ast: &'a SourceFile, name: &str) -> Option<&'a dagrun_ast::VariableValue> {
+fn find_variable_def<'a>(ast: &'a SourceFile, name: &str) -> Option<&'a dr_ast::VariableValue> {
     for item in &ast.items {
         if let Item::Variable(var) = &item.node {
             if var.name.node == name {
@@ -1967,10 +1967,10 @@ fn find_variable_def<'a>(ast: &'a SourceFile, name: &str) -> Option<&'a dagrun_a
     None
 }
 
-fn format_var_value(value: &dagrun_ast::VariableValue) -> String {
+fn format_var_value(value: &dr_ast::VariableValue) -> String {
     match value {
-        dagrun_ast::VariableValue::Static(s) => s.clone(),
-        dagrun_ast::VariableValue::Shell(sh) => format!("`{}`", sh.command.node),
+        dr_ast::VariableValue::Static(s) => s.clone(),
+        dr_ast::VariableValue::Shell(sh) => format!("`{}`", sh.command.node),
     }
 }
 
@@ -2324,7 +2324,7 @@ impl FormatTask {
     }
 }
 
-fn prepare_format_task(source: &str, body: &dagrun_ast::TaskBody) -> Option<FormatTask> {
+fn prepare_format_task(source: &str, body: &dr_ast::TaskBody) -> Option<FormatTask> {
     let language = detect_language(body);
 
     let mut code_lines: Vec<(Span, String)> = Vec::new();

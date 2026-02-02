@@ -4,7 +4,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::lua::parse_lua_config;
-use dagrun_ast::Config;
+use dr_ast::Config;
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -23,13 +23,13 @@ pub fn load_justflow<P: AsRef<Path>>(path: P) -> Result<Config, ParseError> {
 
 pub fn parse_justflow(content: &str) -> Result<Config, ParseError> {
     // parse using the new semantic parser
-    let mut config = dagrun_ast::parse_config(content).map_err(|e| {
+    let mut config = dr_ast::parse_config(content).map_err(|e| {
         let line = content[..e.span.start as usize].lines().count();
         ParseError::Syntax(line, e.message)
     })?;
 
-    // process lua blocks separately (dagrun_ast doesn't have mlua dependency)
-    for lua_block in dagrun_ast::extract_lua_blocks(content) {
+    // process lua blocks separately (dr_ast doesn't have mlua dependency)
+    for lua_block in dr_ast::extract_lua_blocks(content) {
         let lua_config =
             parse_lua_config(&lua_block).map_err(|e| ParseError::Lua(e.to_string()))?;
         config.tasks.extend(lua_config.tasks);
@@ -146,7 +146,7 @@ mod tests {
         assert!(task.service.is_some());
         assert_eq!(
             task.service.as_ref().unwrap().kind,
-            dagrun_ast::ServiceKind::External
+            dr_ast::ServiceKind::External
         );
     }
 

@@ -6,12 +6,12 @@ use std::fs;
 use tempfile::TempDir;
 
 #[allow(deprecated)]
-fn dagrun_cmd() -> Command {
-    Command::cargo_bin("dagrun").unwrap()
+fn dr_cmd() -> Command {
+    Command::cargo_bin("dr").unwrap()
 }
 
-fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun");
+fn create_dagfile(dir: &TempDir, content: &str) -> std::path::PathBuf {
+    let path = dir.path().join("dagfile");
     fs::write(&path, content).unwrap();
     path
 }
@@ -19,7 +19,7 @@ fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
 #[test]
 fn test_single_pipe_from() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 gen:
@@ -31,7 +31,7 @@ transform: gen
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -44,7 +44,7 @@ transform: gen
 #[test]
 fn test_multiple_pipe_from() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 gen_a:
@@ -59,7 +59,7 @@ combine: gen_a gen_b
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -73,7 +73,7 @@ combine: gen_a gen_b
 #[test]
 fn test_pipe_chain() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 source:
@@ -89,7 +89,7 @@ count: upper
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -101,7 +101,7 @@ count: upper
 #[test]
 fn test_join_node() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 worker_1:
@@ -123,7 +123,7 @@ final: collect
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -135,7 +135,7 @@ final: collect
 #[test]
 fn test_pipe_with_multiline_output() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 gen:
@@ -149,7 +149,7 @@ count: gen
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -162,7 +162,7 @@ count: gen
 #[test]
 fn test_pipe_preserves_data() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 gen:
@@ -178,7 +178,7 @@ verify: passthrough
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")

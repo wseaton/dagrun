@@ -7,12 +7,12 @@ version = "0.5.0"
 edition = "2024"
 
 [package]
-name = "dagrun"
+name = "dr"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-dagrun-ast = { path = "crates/dagrun-ast" }
+dr-ast = { path = "crates/dr-ast" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

@@ -20,7 +20,7 @@ use crate::dag::TaskGraph;
 use crate::executor::{Executor, TaskStatus};
 use crate::justfile::load_justflow;
 use crate::lua::load_lua_config;
-use dagrun_ast::{Config, Task};
+use dr_ast::{Config, Task};
 use serde::Serialize;
 
 /// JSON output for `list --format json`
@@ -94,11 +94,11 @@ impl TaskInfo {
 }
 
 #[derive(Parser)]
-#[command(name = "dagrun")]
+#[command(name = "dr")]
 #[command(about = "DAG-based task runner with retry and timeout support", long_about = None)]
 struct Cli {
-    /// Path to config file (dagrun or .lua)
-    #[arg(short, long)]
+    /// Path to config file (dagfile or .lua)
+    #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
     /// Enable verbose debug logging
@@ -116,6 +116,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run a specific task and its dependencies
+    #[command(hide = true)]
     Run {
         /// Task name to run
         task: String,
@@ -152,6 +153,10 @@ enum Commands {
 
     /// Validate the config file
     Validate,
+
+    /// Run a task (implicit when task name is provided)
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[tokio::main]
@@ -170,31 +175,34 @@ async fn main() -> anyhow::Result<()> {
 
     let graph = TaskGraph::from_config(config)?;
 
-    match cli.command {
-        Commands::Run { task, only, args } => {
-            let executor = Executor::new(graph);
-            executor.register_services().await;
+    // determine what to run: explicit subcommand or implicit task name
+    let (task, only, args) = match cli.command {
+        Commands::Run { task, only, args } => (task, only, args),
+        Commands::External(ext_args) => {
+            // parse external args: first is task name, rest are args
+            // check for --only flag
+            let mut task_name = None;
+            let mut only = false;
+            let mut task_args = Vec::new();
 
-            let results = if only {
-                // run just this task (no deps)
-                if let Some(t) = executor.graph.task(&task) {
-                    let bound_task = bind_task_parameters(t, &args)?;
-                    vec![executor.execute_single(&bound_task).await]
+            for arg in ext_args.iter() {
+                if arg == "--only" {
+                    only = true;
+                } else if task_name.is_none() {
+                    task_name = Some(arg);
                 } else {
-                    executor.close().await;
-                    anyhow::bail!("Task '{}' not found", task);
+                    task_args.push(arg.to_owned());
                 }
-            } else {
-                executor.run_task_with_args(&task, &args).await?
-            };
-
-            executor.close().await;
-            print_results(&results);
-            if results.iter().any(|r| r.status == TaskStatus::Failed) {
-                std::process::exit(1);
             }
-        }
 
+            let Some(task) = task_name else {
+                // no task specified, show help
+                use clap::CommandFactory;
+                Cli::command().print_help()?;
+                return Ok(());
+            };
+            (task.to_owned(), only, task_args)
+        }
         Commands::RunAll => {
             let executor = Executor::new(graph);
             executor.register_services().await;
@@ -204,73 +212,100 @@ async fn main() -> anyhow::Result<()> {
             if results.iter().any(|r| r.status == TaskStatus::Failed) {
                 std::process::exit(1);
             }
+            return Ok(());
         }
-
-        Commands::List { format } => match format.as_str() {
-            "json" => {
-                let output = ListOutput::from_graph(&graph);
-                println!("{}", serde_json::to_string_pretty(&output).unwrap());
-            }
-            _ => {
-                println!("{}", "Tasks:".bold());
-                for name in graph.task_names() {
-                    let task = graph.task(name).unwrap();
-                    let deps = if task.depends_on.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" (depends on: {})", task.depends_on.join(", "))
-                    };
-                    println!("  {} {}{}", "•".cyan(), name, deps.dimmed());
+        Commands::List { format } => {
+            match format.as_str() {
+                "json" => {
+                    let output = ListOutput::from_graph(&graph);
+                    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                }
+                _ => {
+                    println!("{}", "Tasks:".bold());
+                    for name in graph.task_names() {
+                        let task = graph.task(name).unwrap();
+                        let deps = if task.depends_on.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" (depends on: {})", task.depends_on.join(", "))
+                        };
+                        println!("  {} {}{}", "•".cyan(), name, deps.dimmed());
+                    }
                 }
             }
-        },
+            return Ok(());
+        }
+        Commands::Graph { format, output } => {
+            match format.as_str() {
+                "ascii" => {
+                    println!("{}", graph.to_ascii());
+                }
+                "dot" => {
+                    println!("{}", graph.to_dot());
+                }
+                "png" => {
+                    let dot = graph.to_dot();
+                    let out_path = output.unwrap_or_else(|| PathBuf::from("dr-graph.png"));
 
-        Commands::Graph { format, output } => match format.as_str() {
-            "ascii" => {
-                println!("{}", graph.to_ascii());
+                    // pipe to dot command
+                    let mut child = StdCommand::new("dot")
+                        .args(["-Tpng", "-o"])
+                        .arg(&out_path)
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()?;
+
+                    use std::io::Write;
+                    child.stdin.as_mut().unwrap().write_all(dot.as_bytes())?;
+                    child.wait()?;
+
+                    println!("Graph written to {}", out_path.display());
+                }
+                _ => {
+                    anyhow::bail!("Unknown format: {}. Use ascii, dot, or png", format);
+                }
             }
-            "dot" => {
-                println!("{}", graph.to_dot());
-            }
-            "png" => {
-                let dot = graph.to_dot();
-                let out_path = output.unwrap_or_else(|| PathBuf::from("dagrun-graph.png"));
-
-                // pipe to dot command
-                let mut child = StdCommand::new("dot")
-                    .args(["-Tpng", "-o"])
-                    .arg(&out_path)
-                    .stdin(std::process::Stdio::piped())
-                    .spawn()?;
-
-                use std::io::Write;
-                child.stdin.as_mut().unwrap().write_all(dot.as_bytes())?;
-                child.wait()?;
-
-                println!("Graph written to {}", out_path.display());
-            }
-            _ => {
-                anyhow::bail!("Unknown format: {}. Use ascii, dot, or png", format);
-            }
-        },
-
+            return Ok(());
+        }
         Commands::Validate => {
             println!("{} Config is valid!", "✓".green());
             println!("  {} tasks defined", graph.task_names().len());
+            return Ok(());
         }
+    };
+
+    let executor = Executor::new(graph);
+    executor.register_services().await;
+
+    let results = if only {
+        // run just this task (no deps)
+        if let Some(t) = executor.graph.task(&task) {
+            let bound_task = bind_task_parameters(t, &args)?;
+            vec![executor.execute_single(&bound_task).await]
+        } else {
+            executor.close().await;
+            anyhow::bail!("Task '{}' not found", task);
+        }
+    } else {
+        executor.run_task_with_args(&task, &args).await?
+    };
+
+    executor.close().await;
+    print_results(&results);
+    if results.iter().any(|r| r.status == TaskStatus::Failed) {
+        std::process::exit(1);
     }
 
     Ok(())
 }
 
 fn find_config_file() -> PathBuf {
-    for name in ["dagrun", "dagrun.dr", "dagrun.lua"] {
+    for name in ["dagfile", "dagfile.dr", "dagfile.lua"] {
         let path = PathBuf::from(name);
         if path.exists() {
             return path;
         }
     }
-    PathBuf::from("dagrun")
+    PathBuf::from("dagfile")
 }
 
 fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
@@ -279,12 +314,12 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 
     match ext {
         "lua" => load_lua_config(path).map_err(|e| anyhow::anyhow!("{}", e)),
-        "dr" | "dagrun" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
-        _ if filename == "dagrun" || ext.is_empty() => {
+        "dr" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
+        _ if filename == "dagfile" || ext.is_empty() => {
             load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e))
         }
         _ => anyhow::bail!(
-            "Unknown config format: {}. Use .dr, .dagrun, or .lua",
+            "Unknown config format: {}. Use .dr or .lua extension, or name the file 'dagfile'",
             path.display()
         ),
     }
@@ -364,7 +399,7 @@ fn setup_tracing(verbose: bool, quiet: bool) {
             .with_target(true)
             .with_level(true);
         let filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("dagrun=debug"));
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("dr=debug"));
 
         tracing_subscriber::registry()
             .with(progress_layer)

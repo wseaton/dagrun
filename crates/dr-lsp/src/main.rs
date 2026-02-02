@@ -1,7 +1,7 @@
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 
-use dagrun_lsp::Backend;
+use dr_lsp::Backend;
 
 #[tokio::main]
 async fn main() {

@@ -6,12 +6,12 @@ use std::fs;
 use tempfile::TempDir;
 
 #[allow(deprecated)]
-fn dagrun_cmd() -> Command {
-    Command::cargo_bin("dagrun").unwrap()
+fn dr_cmd() -> Command {
+    Command::cargo_bin("dr").unwrap()
 }
 
-fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
-    let path = dir.path().join("dagrun");
+fn create_dagfile(dir: &TempDir, content: &str) -> std::path::PathBuf {
+    let path = dir.path().join("dagfile");
     fs::write(&path, content).unwrap();
     path
 }
@@ -19,7 +19,7 @@ fn create_dagrun_file(dir: &TempDir, content: &str) -> std::path::PathBuf {
 #[test]
 fn test_simple_task_execution() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 hello:
@@ -27,7 +27,7 @@ hello:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -40,7 +40,7 @@ hello:
 #[test]
 fn test_task_with_dependencies() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 first:
@@ -54,7 +54,7 @@ third: second
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -69,7 +69,7 @@ third: second
 #[test]
 fn test_task_with_only_flag() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 first:
@@ -80,7 +80,7 @@ second: first
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -95,7 +95,7 @@ second: first
 #[test]
 fn test_parallel_task_execution() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 a:
@@ -109,7 +109,7 @@ c: a b
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -124,7 +124,7 @@ c: a b
 #[test]
 fn test_task_timeout() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 @timeout 1s
@@ -133,7 +133,7 @@ slow:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -147,7 +147,7 @@ fn test_task_retry() {
     let dir = TempDir::new().unwrap();
     let marker = dir.path().join("retry_marker");
 
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         &format!(
             r#"
@@ -160,7 +160,7 @@ flaky:
         ),
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -173,7 +173,7 @@ flaky:
 #[test]
 fn test_task_failure_stops_dag() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 fail:
@@ -184,7 +184,7 @@ after: fail
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -197,7 +197,7 @@ after: fail
 #[test]
 fn test_variable_substitution() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 name := world
@@ -207,7 +207,7 @@ greet:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -220,7 +220,7 @@ greet:
 #[test]
 fn test_shell_variable_expansion() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 count := `expr 2 + 2`
@@ -230,7 +230,7 @@ show:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -243,7 +243,7 @@ show:
 #[test]
 fn test_list_command() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 build:
@@ -257,7 +257,7 @@ deploy: test
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("list")
@@ -271,7 +271,7 @@ deploy: test
 #[test]
 fn test_list_json_format() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 build:
@@ -282,7 +282,7 @@ test: build
 "#,
     );
 
-    let output = dagrun_cmd()
+    let output = dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("list")
@@ -299,7 +299,7 @@ test: build
 #[test]
 fn test_validate_command() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 build:
@@ -307,7 +307,7 @@ build:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("validate")
@@ -319,7 +319,7 @@ build:
 #[test]
 fn test_graph_ascii() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 a:
@@ -330,7 +330,7 @@ b: a
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("graph")
@@ -342,7 +342,7 @@ b: a
 #[test]
 fn test_graph_dot_format() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 a:
@@ -353,7 +353,7 @@ b: a
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("graph")
@@ -368,7 +368,7 @@ b: a
 #[test]
 fn test_cycle_detection() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 a: b
@@ -379,7 +379,7 @@ b: a
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -392,7 +392,7 @@ b: a
 #[test]
 fn test_task_not_found() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 build:
@@ -400,7 +400,7 @@ build:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")
@@ -412,7 +412,7 @@ build:
 #[test]
 fn test_run_all() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 a:
@@ -423,7 +423,7 @@ b:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run-all")
@@ -436,7 +436,7 @@ b:
 #[test]
 fn test_multiline_command() {
     let dir = TempDir::new().unwrap();
-    let config = create_dagrun_file(
+    let config = create_dagfile(
         &dir,
         r#"
 multi:
@@ -446,7 +446,7 @@ multi:
 "#,
     );
 
-    dagrun_cmd()
+    dr_cmd()
         .arg("-c")
         .arg(&config)
         .arg("run")

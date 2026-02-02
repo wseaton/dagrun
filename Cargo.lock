@@ -373,64 +373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dagrun"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bytes",
- "clap",
- "colored",
- "dagrun-ast",
- "dirs",
- "dotenvy",
- "fastrand",
- "glob",
- "humantime",
- "k8s-openapi",
- "kube",
- "mlua",
- "nix",
- "openssh",
- "openssh-sftp-client",
- "petgraph",
- "predicates",
- "reqwest",
- "serde",
- "serde_json",
- "shell-escape",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "dagrun-ast"
-version = "0.5.0"
-dependencies = [
- "humantime",
- "serde",
- "url",
-]
-
-[[package]]
-name = "dagrun-lsp"
-version = "0.5.0"
-dependencies = [
- "dagrun-ast",
- "futures",
- "shellexpand",
- "tokio",
- "tower-lsp-server",
- "tracing",
- "tracing-subscriber",
- "which",
-]
-
-[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,6 +505,64 @@ name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
+name = "dr"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "bytes",
+ "clap",
+ "colored",
+ "dirs",
+ "dotenvy",
+ "dr-ast",
+ "fastrand",
+ "glob",
+ "humantime",
+ "k8s-openapi",
+ "kube",
+ "mlua",
+ "nix",
+ "openssh",
+ "openssh-sftp-client",
+ "petgraph",
+ "predicates",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "shell-escape",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "dr-ast"
+version = "0.5.0"
+dependencies = [
+ "humantime",
+ "serde",
+ "url",
+]
+
+[[package]]
+name = "dr-lsp"
+version = "0.5.0"
+dependencies = [
+ "dr-ast",
+ "futures",
+ "shellexpand",
+ "tokio",
+ "tower-lsp-server",
+ "tracing",
+ "tracing-subscriber",
+ "which",
+]
 
 [[package]]
 name = "dyn-clone"

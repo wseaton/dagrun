@@ -1,4 +1,4 @@
-# dagrun
+# dr (DAG runner)
 
 > What if you took make/just and airflow/dagster and combined them together?
 
@@ -6,12 +6,12 @@ A DAG-based task runner with SSH remote execution, Kubernetes integration, piped
 
 ## Status
 > [!WARNING]
-The API of `dagrun` is very much not stable, syntax might change in the near future!
+The API of `dr` is very much not stable, syntax might change in the near future!
 
 
-## Why dagrun?
+## Why dr?
 
-| Feature | make | just | ansible | dagrun |
+| Feature | make | just | ansible | dr |
 |---------|------|------|---------|--------|
 | DAG dependencies | partial | no | yes | yes |
 | SSH remote execution | no | no | yes | yes |
@@ -23,7 +23,7 @@ The API of `dagrun` is very much not stable, syntax might change in the near fut
 | Shebang scripts | no | yes | no | yes |
 | Simple syntax | no | yes | no | yes |
 
-dagrun takes the simple, readable syntax of [just](https://github.com/casey/just) and adds DAG execution, SSH remote tasks, Kubernetes jobs, piped data flow, and embedded Lua for dynamic task generation.
+dr takes the simple, readable syntax of [just](https://github.com/casey/just) and adds DAG execution, SSH remote tasks, Kubernetes jobs, piped data flow, and embedded Lua for dynamic task generation.
 
 ## Install
 
@@ -33,7 +33,7 @@ cargo install --path .
 
 ## Quick Start
 
-Create a `dagrun` file:
+Create a `dagfile`:
 
 ```bash
 build:
@@ -52,9 +52,9 @@ deploy: test
 Run it:
 
 ```bash
-dagrun run deploy    # runs build -> test -> deploy
-dagrun run test --only  # runs just test, skips deps
-dagrun list          # list all tasks
+dr deploy           # runs build -> test -> deploy
+dr test --only      # runs just test, skips deps
+dr list             # list all tasks
 ```
 
 ## Shebang Scripts
@@ -169,9 +169,9 @@ final: worker-1 worker-2 worker-3 worker-4 worker-5
 Visualize your task graph with color-coded nodes showing task types:
 
 ```bash
-dagrun graph              # ASCII art in terminal
-dagrun graph -f dot       # Graphviz DOT format
-dagrun graph -f png -o workflow.png  # PNG image (requires graphviz)
+dr graph              # ASCII art in terminal
+dr graph -f dot       # Graphviz DOT format
+dr graph -f png -o workflow.png  # PNG image (requires graphviz)
 ```
 
 ![Complex Workflow](docs/complex-workflow.png)
@@ -198,7 +198,7 @@ end
 
 ## Editor Integration
 
-dagrun includes an LSP server for editor support:
+dr includes an LSP server for editor support:
 
 ![Editor Integration](docs/editor.png)
 
@@ -206,18 +206,18 @@ dagrun includes an LSP server for editor support:
 
 **Install**:
 ```bash
-cargo install --git https://github.com/wseaton/dagrun.git dagrun-lsp
+cargo install --git https://github.com/wseaton/justflow.git dr-lsp
 ```
 
-See [crates/dagrun-lsp/README.md](crates/dagrun-lsp/README.md) for Neovim and Claude Code setup.
+See [crates/dr-lsp/README.md](crates/dr-lsp/README.md) for Neovim and Claude Code setup.
 
 ## Examples
 
 See the `examples/` directory:
 
-- `basic.dagrun` - variables, deps, timeouts, retries, Lua scripting
-- `ssh.dagrun` - remote execution with uploads/downloads
-- `ssh-service.dagrun` - managed services on remote hosts
-- `ssh-service-remote.dagrun` - remote HTTP service example
-- `k8s.dagrun` - Kubernetes jobs, exec, apply, file transfer, port forwarding
-- `complex-hybrid.dagrun` - complex hybrid workflow with Lua-generated K8s workers
+- `basic.dr` - variables, deps, timeouts, retries, Lua scripting
+- `ssh.dr` - remote execution with uploads/downloads
+- `ssh-service.dr` - managed services on remote hosts
+- `ssh-service-remote.dr` - remote HTTP service example
+- `k8s.dr` - Kubernetes jobs, exec, apply, file transfer, port forwarding
+- `complex-hybrid.dr` - complex hybrid workflow with Lua-generated K8s workers

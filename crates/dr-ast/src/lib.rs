@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use dagrun_ast::parse_config;
+//! use dr_ast::parse_config;
 //!
 //! let source = r#"
 //! @timeout 5m

@@ -5,7 +5,7 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use dagrun_ast::{Config, K8sMode, Task};
+use dr_ast::{Config, K8sMode, Task};
 
 #[derive(Error, Debug)]
 pub enum DagError {
@@ -152,7 +152,7 @@ impl TaskGraph {
 
     /// export graph to DOT format for graphviz
     pub fn to_dot(&self) -> String {
-        let mut dot = String::from("digraph dagrun {\n");
+        let mut dot = String::from("digraph dr {\n");
         dot.push_str("    rankdir=TB;\n");
         dot.push_str("    node [shape=box, style=\"rounded,filled\", fontname=\"Helvetica\"];\n\n");
 
@@ -320,7 +320,7 @@ impl TaskGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dagrun_ast::DotenvSettings;
+    use dr_ast::DotenvSettings;
 
     fn make_task(name: &str, run: &str, depends_on: Vec<&str>) -> Task {
         Task {

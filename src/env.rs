@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::{info, warn};
 
-use dagrun_ast::{DotenvSettings, ReadinessCheck, ServiceKind};
+use dr_ast::{DotenvSettings, ReadinessCheck, ServiceKind};
 
 /// Load environment variables from dotenv files
 pub fn load_dotenv(settings: &DotenvSettings) -> Result<(), String> {

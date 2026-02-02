@@ -36,7 +36,7 @@ use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
 
-use dagrun_ast::{Config, DotenvSettings, K8sConfig, K8sMode, Shebang, SshConfig, Task};
+use dr_ast::{Config, DotenvSettings, K8sConfig, K8sMode, Shebang, SshConfig, Task};
 
 #[derive(Error, Debug)]
 pub enum LuaConfigError {
