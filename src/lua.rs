@@ -96,6 +96,7 @@ fn parse_ssh_config(opts: &Table) -> LuaResult<SshConfig> {
         workdir: opts.get("workdir").ok(),
         upload: Vec::new(),
         download: Vec::new(),
+        env: HashMap::new(),
     })
 }
 

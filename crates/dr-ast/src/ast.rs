@@ -217,6 +217,9 @@ pub enum AnnotationKind {
     /// `@k8s-forward local:resource:remote`
     K8sForward(PortForwardAnnotation),
 
+    /// `@env KEY=VALUE`
+    Env(EnvAnnotation),
+
     /// `@use contextname`
     Use(Spanned<String>),
 
@@ -276,6 +279,13 @@ pub struct PortForwardAnnotation {
     pub remote_port: Spanned<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct EnvAnnotation {
+    pub key: Spanned<String>,
+    pub eq_span: Span,
+    pub value: Spanned<String>,
+}
+
 // ============================================================================
 // Lua Blocks
 // ============================================================================
@@ -316,10 +326,10 @@ pub struct SetDirective {
     pub set_span: Span,
     /// Key name
     pub key: Spanned<String>,
-    /// `:=` span
-    pub assign_span: Span,
-    /// Value
-    pub value: Spanned<String>,
+    /// `:=` span (None for bare form like `set dotenv-load`)
+    pub assign_span: Option<Span>,
+    /// Value (None for bare form like `set dotenv-load`)
+    pub value: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Clone)]

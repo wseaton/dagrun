@@ -39,6 +39,10 @@ fastrand = "2"
 kube = { version = "3", features = ["runtime", "derive"] }
 k8s-openapi = { version = "0.27", features = ["latest"] }
 tempfile = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+ratatui = "0.29"
+crossterm = "0.28"
+async-trait = "0.1"
 
 [dev-dependencies]
 assert_cmd = "2"

@@ -155,4 +155,30 @@ mod tests {
         let config = parse_justflow("set dotenv := true\nbuild:\n\techo hi").unwrap();
         assert!(config.dotenv.load);
     }
+
+    #[test]
+    fn test_dotenv_load_bare() {
+        let config = parse_justflow("set dotenv-load\nbuild:\n\techo hi").unwrap();
+        assert!(config.dotenv.load);
+    }
+
+    #[test]
+    fn test_dotenv_load_explicit() {
+        let config = parse_justflow("set dotenv-load := true\nbuild:\n\techo hi").unwrap();
+        assert!(config.dotenv.load);
+    }
+
+    #[test]
+    fn test_dotenv_required_bare() {
+        let config = parse_justflow("set dotenv-required\nbuild:\n\techo hi").unwrap();
+        assert!(config.dotenv.required);
+    }
+
+    #[test]
+    fn test_env_annotation() {
+        let config = parse_justflow("@ssh host=server\n@env FOO=bar\ntask:\n\techo hi").unwrap();
+        let task = config.tasks.get("task").unwrap();
+        let ssh = task.ssh.as_ref().unwrap();
+        assert_eq!(ssh.env.get("FOO"), Some(&"bar".to_string()));
+    }
 }

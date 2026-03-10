@@ -1,9 +1,9 @@
 use crate::ast::{
     Annotation, AnnotationKind, BodyLine, CommandLine, CommandSegment, Comment,
-    ConfigMountAnnotation, ContextBlock, Dependency, FileTransferAnnotation, Interpolation, Item,
-    K8sAnnotation, KeyValue, LuaBlock, Parameter, ParameterDefault, PortForwardAnnotation,
-    ServiceAnnotation, SetDirective, Shebang, ShellExpansion, SourceFile, SshAnnotation, TaskBody,
-    TaskDecl, VariableDecl, VariableValue,
+    ConfigMountAnnotation, ContextBlock, Dependency, EnvAnnotation, FileTransferAnnotation,
+    Interpolation, Item, K8sAnnotation, KeyValue, LuaBlock, Parameter, ParameterDefault,
+    PortForwardAnnotation, ServiceAnnotation, SetDirective, Shebang, ShellExpansion, SourceFile,
+    SshAnnotation, TaskBody, TaskDecl, VariableDecl, VariableValue,
 };
 use crate::error::{ParseError, ParseErrorKind};
 use crate::lexer::{Lexer, Token, TokenKind};
@@ -269,6 +269,18 @@ impl<'a> Parser<'a> {
             "k8s-forward" => {
                 let pf = self.parse_port_forward()?;
                 Ok(AnnotationKind::K8sForward(pf))
+            }
+            "env" => {
+                self.skip_whitespace();
+                let key = self.parse_identifier()?;
+                self.skip_whitespace();
+                let eq_span = self.expect(TokenKind::Equals)?.span;
+                let value = self.parse_rest_of_line_trimmed();
+                Ok(AnnotationKind::Env(EnvAnnotation {
+                    key,
+                    eq_span,
+                    value,
+                }))
             }
             "use" => {
                 let context_name = self.parse_rest_of_line_trimmed();
@@ -1039,11 +1051,18 @@ impl<'a> Parser<'a> {
 
         let key = self.parse_identifier()?;
         self.skip_whitespace();
-        let assign_span = self.expect(TokenKind::ColonEquals)?.span;
-        self.skip_whitespace();
 
-        let value = self.parse_rest_of_line_trimmed();
-        let span = set_span.merge(value.span);
+        let (assign_span, value) = if self.peek().kind == TokenKind::ColonEquals {
+            let assign = self.expect(TokenKind::ColonEquals)?.span;
+            self.skip_whitespace();
+            let val = self.parse_rest_of_line_trimmed();
+            (Some(assign), Some(val))
+        } else {
+            (None, None)
+        };
+
+        let end_span = value.as_ref().map(|v| v.span).unwrap_or(key.span);
+        let span = set_span.merge(end_span);
 
         Ok(Some(Spanned::new(
             Item::SetDirective(SetDirective {

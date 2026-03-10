@@ -616,17 +616,21 @@ fn collect_semantic_tokens(_source: &str, ast: &SourceFile) -> Vec<RawToken> {
                     modifiers: 0,
                 });
                 // :=
-                tokens.push(RawToken {
-                    span: set.assign_span,
-                    token_type: 6, // OPERATOR
-                    modifiers: 0,
-                });
+                if let Some(assign_span) = set.assign_span {
+                    tokens.push(RawToken {
+                        span: assign_span,
+                        token_type: 6, // OPERATOR
+                        modifiers: 0,
+                    });
+                }
                 // value
-                tokens.push(RawToken {
-                    span: set.value.span,
-                    token_type: 5, // STRING
-                    modifiers: 0,
-                });
+                if let Some(ref value) = set.value {
+                    tokens.push(RawToken {
+                        span: value.span,
+                        token_type: 5, // STRING
+                        modifiers: 0,
+                    });
+                }
             }
 
             Item::Comment(_) => {
@@ -740,6 +744,23 @@ fn collect_annotation_tokens(kind: &AnnotationKind, tokens: &mut Vec<RawToken>) 
             tokens.push(RawToken {
                 span: pf.remote_port.span,
                 token_type: 5,
+                modifiers: 0,
+            });
+        }
+        AnnotationKind::Env(env) => {
+            tokens.push(RawToken {
+                span: env.key.span,
+                token_type: 7, // PARAMETER
+                modifiers: 0,
+            });
+            tokens.push(RawToken {
+                span: env.eq_span,
+                token_type: 6, // OPERATOR
+                modifiers: 0,
+            });
+            tokens.push(RawToken {
+                span: env.value.span,
+                token_type: 5, // STRING
                 modifiers: 0,
             });
         }
@@ -1947,6 +1968,12 @@ fn get_annotation_hover(
             format!(
                 "**@use** `{}`\n\nApply annotations from the named context to this task.",
                 ctx_name.node
+            )
+        }
+        AnnotationKind::Env(env) => {
+            format!(
+                "**@env** `{}={}`\n\nSet environment variable on remote host before command execution.",
+                env.key.node, env.value.node
             )
         }
         AnnotationKind::Unknown { name, .. } => {

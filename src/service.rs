@@ -1009,6 +1009,7 @@ mod tests {
                 workdir: Some("/app".to_string()),
                 upload: vec![],
                 download: vec![],
+                env: HashMap::new(),
             }),
             k8s: None,
             shebang: None,

@@ -14,6 +14,7 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::progress::task_color;
+use crate::recorder::{NoOpRecorder, OutputChunk, Recorder, RunId, TaskExecutionId};
 
 use crate::dag::TaskGraph;
 use crate::k8s::{self, ResourceTracker};
@@ -69,10 +70,11 @@ pub struct Executor {
     ssh_sessions: SessionCache,
     services: Arc<ServiceManager>,
     k8s_tracker: ResourceTracker,
+    recorder: Arc<dyn Recorder>,
 }
 
 impl Executor {
-    pub fn new(graph: TaskGraph) -> Self {
+    pub fn new(graph: TaskGraph, recorder: Arc<dyn Recorder>) -> Self {
         let ssh_sessions = ssh::new_session_cache();
         Executor {
             graph,
@@ -80,7 +82,13 @@ impl Executor {
             ssh_sessions: ssh_sessions.clone(),
             services: Arc::new(ServiceManager::with_ssh_cache(ssh_sessions)),
             k8s_tracker: k8s::new_tracker(),
+            recorder,
         }
+    }
+
+    /// Create an executor without recording (uses NoOpRecorder).
+    pub fn new_without_recording(graph: TaskGraph) -> Self {
+        Self::new(graph, Arc::new(NoOpRecorder))
     }
 
     /// Register all services from the graph
@@ -101,55 +109,115 @@ impl Executor {
         ssh::close_sessions(&self.ssh_sessions).await;
     }
 
-    pub async fn run_task(&self, target: &str) -> Result<Vec<TaskResult>, ExecutorError> {
+    pub async fn run_task(
+        &self,
+        target: &str,
+        config_path: &str,
+        args: &[String],
+    ) -> Result<Vec<TaskResult>, ExecutorError> {
         let tasks = self.graph.execution_order_for(target)?;
-        self.execute_sequential(tasks).await
+
+        // Record run start
+        let run_id = self
+            .recorder
+            .record_run_start(config_path, target, args)
+            .await
+            .ok();
+
+        let start = Instant::now();
+        let results = self.execute_sequential(tasks, run_id).await;
+
+        // Record run completion
+        if let Some(rid) = run_id {
+            let success = results
+                .as_ref()
+                .map(|r| r.iter().all(|t| t.status == TaskStatus::Success))
+                .unwrap_or(false);
+            let _ = self
+                .recorder
+                .record_run_complete(rid, success, start.elapsed())
+                .await;
+        }
+
+        results
     }
 
     /// Run task with positional arguments bound to parameters
     pub async fn run_task_with_args(
         &self,
         target: &str,
-        args: &[String],
+        config_path: &str,
+        task_args: &[String],
     ) -> Result<Vec<TaskResult>, ExecutorError> {
         let tasks = self.graph.execution_order_for(target)?;
 
+        // Record run start
+        let run_id = self
+            .recorder
+            .record_run_start(config_path, target, task_args)
+            .await
+            .ok();
+
+        let start = Instant::now();
+
         // if no args, just run normally
-        if args.is_empty() {
-            return self.execute_sequential(tasks).await;
-        }
+        let results = if task_args.is_empty() {
+            self.execute_sequential(tasks, run_id).await
+        } else {
+            // build name->value mapping from target task's parameters
+            let target_task = self
+                .graph
+                .task(target)
+                .ok_or_else(|| ExecutorError::TaskNotFound(target.to_string()))?;
+            let bindings = build_param_bindings(target_task, task_args)
+                .map_err(|_| ExecutorError::TaskFailed(target.to_string(), 0))?;
 
-        // build name->value mapping from target task's parameters
-        let target_task = self
-            .graph
-            .task(target)
-            .ok_or_else(|| ExecutorError::TaskNotFound(target.to_string()))?;
-        let bindings = build_param_bindings(target_task, args)
-            .map_err(|_| ExecutorError::TaskFailed(target.to_string(), 0))?;
+            // apply bindings to all tasks in the chain
+            let mut results = Vec::new();
+            for task in tasks {
+                let task_to_run = apply_bindings(task, &bindings)
+                    .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?;
 
-        // apply bindings to all tasks in the chain
-        let mut results = Vec::new();
-        for task in tasks {
-            let task_to_run = apply_bindings(task, &bindings)
-                .map_err(|_| ExecutorError::TaskFailed(task.name.clone(), 0))?;
-
-            let result = self.execute_single(&task_to_run).await;
-            let failed = result.status == TaskStatus::Failed;
-            results.push(result);
-            if failed {
-                break;
+                let result = self.execute_single_with_run(&task_to_run, run_id).await;
+                let failed = result.status == TaskStatus::Failed;
+                results.push(result);
+                if failed {
+                    break;
+                }
             }
+            Ok(results)
+        };
+
+        // Record run completion
+        if let Some(rid) = run_id {
+            let success = results
+                .as_ref()
+                .map(|r| r.iter().all(|t| t.status == TaskStatus::Success))
+                .unwrap_or(false);
+            let _ = self
+                .recorder
+                .record_run_complete(rid, success, start.elapsed())
+                .await;
         }
 
-        Ok(results)
+        results
     }
 
-    pub async fn run_all(&self) -> Result<Vec<TaskResult>, ExecutorError> {
+    pub async fn run_all(&self, config_path: &str) -> Result<Vec<TaskResult>, ExecutorError> {
         let groups = self.graph.parallel_groups()?;
+
+        // Record run start (target is "all" for run_all)
+        let run_id = self
+            .recorder
+            .record_run_start(config_path, "all", &[])
+            .await
+            .ok();
+
+        let start = Instant::now();
         let mut all_results = Vec::new();
 
         for group in groups {
-            let results = self.execute_parallel(group).await?;
+            let results = self.execute_parallel(group, run_id).await?;
 
             let any_failed = results.iter().any(|r| r.status == TaskStatus::Failed);
             all_results.extend(results);
@@ -159,12 +227,22 @@ impl Executor {
             }
         }
 
+        // Record run completion
+        if let Some(rid) = run_id {
+            let success = all_results.iter().all(|r| r.status == TaskStatus::Success);
+            let _ = self
+                .recorder
+                .record_run_complete(rid, success, start.elapsed())
+                .await;
+        }
+
         Ok(all_results)
     }
 
     async fn execute_sequential(
         &self,
         tasks: Vec<&Task>,
+        run_id: Option<RunId>,
     ) -> Result<Vec<TaskResult>, ExecutorError> {
         let mut results = Vec::new();
 
@@ -197,6 +275,8 @@ impl Executor {
                     &self.ssh_sessions,
                     &service_env,
                     &self.k8s_tracker,
+                    &self.recorder,
+                    run_id,
                 )
                 .await
             };
@@ -223,7 +303,11 @@ impl Executor {
         Ok(results)
     }
 
-    async fn execute_parallel(&self, tasks: Vec<&Task>) -> Result<Vec<TaskResult>, ExecutorError> {
+    async fn execute_parallel(
+        &self,
+        tasks: Vec<&Task>,
+        run_id: Option<RunId>,
+    ) -> Result<Vec<TaskResult>, ExecutorError> {
         let handles: Vec<_> = tasks
             .into_iter()
             .map(|task| {
@@ -232,6 +316,7 @@ impl Executor {
                 let ssh_sessions = self.ssh_sessions.clone();
                 let services = self.services.clone();
                 let k8s_tracker = self.k8s_tracker.clone();
+                let recorder = self.recorder.clone();
 
                 tokio::spawn(async move {
                     // acquire service dependencies
@@ -262,6 +347,8 @@ impl Executor {
                             &ssh_sessions,
                             &service_env,
                             &k8s_tracker,
+                            &recorder,
+                            run_id,
                         )
                         .await
                     };
@@ -293,7 +380,13 @@ impl Executor {
         collect_pipe_inputs_from_store(task, &self.outputs).await
     }
 
+    /// Execute a single task without run tracking (for backwards compatibility).
     pub async fn execute_single(&self, task: &Task) -> TaskResult {
+        self.execute_single_with_run(task, None).await
+    }
+
+    /// Execute a single task with optional run tracking.
+    async fn execute_single_with_run(&self, task: &Task, run_id: Option<RunId>) -> TaskResult {
         let stdin_data = self.collect_pipe_inputs(task).await;
         execute_with_retry(
             task,
@@ -301,6 +394,8 @@ impl Executor {
             &self.ssh_sessions,
             &HashMap::new(),
             &self.k8s_tracker,
+            &self.recorder,
+            run_id,
         )
         .await
     }
@@ -333,11 +428,23 @@ async fn execute_with_retry(
     ssh_sessions: &SessionCache,
     service_env: &HashMap<String, String>,
     k8s_tracker: &ResourceTracker,
+    recorder: &Arc<dyn Recorder>,
+    run_id: Option<RunId>,
 ) -> TaskResult {
     let max_attempts = task.retry + 1;
     let mut output = String::new();
 
     for attempt in 1..=max_attempts {
+        // Record task start
+        let task_exec_id = if let Some(rid) = run_id {
+            recorder
+                .record_task_start(rid, &task.name, attempt)
+                .await
+                .ok()
+        } else {
+            None
+        };
+
         info!(
             task = %task.name,
             progress = "start",
@@ -347,9 +454,28 @@ async fn execute_with_retry(
         );
 
         let start = Instant::now();
-        match execute_once(task, stdin_data, ssh_sessions, service_env, k8s_tracker).await {
+        match execute_once(
+            task,
+            stdin_data,
+            ssh_sessions,
+            service_env,
+            k8s_tracker,
+            recorder,
+            task_exec_id,
+        )
+        .await
+        {
             Ok(task_output) => {
-                let duration_ms = start.elapsed().as_millis() as u64;
+                let duration = start.elapsed();
+                let duration_ms = duration.as_millis() as u64;
+
+                // Record task completion
+                if let Some(exec_id) = task_exec_id {
+                    let _ = recorder
+                        .record_task_complete(exec_id, TaskStatus::Success, duration)
+                        .await;
+                }
+
                 info!(
                     task = %task.name,
                     progress = "done",
@@ -364,7 +490,16 @@ async fn execute_with_retry(
                 };
             }
             Err(e) => {
+                let duration = start.elapsed();
                 output = format!("{}", e);
+
+                // Record task failure
+                if let Some(exec_id) = task_exec_id {
+                    let _ = recorder
+                        .record_task_complete(exec_id, TaskStatus::Failed, duration)
+                        .await;
+                }
+
                 if attempt < max_attempts {
                     warn!(
                         task = %task.name,
@@ -400,6 +535,8 @@ async fn execute_once(
     ssh_sessions: &SessionCache,
     service_env: &HashMap<String, String>,
     k8s_tracker: &ResourceTracker,
+    recorder: &Arc<dyn Recorder>,
+    task_exec_id: Option<TaskExecutionId>,
 ) -> Result<String, ExecutorError> {
     // handle join nodes - just pass through the stdin as output
     if task.is_join() {
@@ -429,6 +566,15 @@ async fn execute_once(
         .await
         .map_err(|e| ExecutorError::K8s(e.to_string()))?;
 
+        // Record K8s output (non-streaming for now)
+        if let Some(exec_id) = task_exec_id {
+            for line in result.stdout.lines() {
+                let _ = recorder
+                    .record_output_chunk(exec_id, OutputChunk::stdout(line.to_string()))
+                    .await;
+            }
+        }
+
         if result.success {
             return Ok(result.stdout);
         } else {
@@ -452,6 +598,8 @@ async fn execute_once(
             ssh_config,
             ssh_sessions,
             service_env,
+            recorder,
+            task_exec_id,
         )
         .await;
     }
@@ -520,6 +668,8 @@ async fn execute_once(
 
         let task_name = task.name.clone();
         let color = task_color(&task_name);
+        let recorder_stdout = recorder.clone();
+        let exec_id_stdout = task_exec_id;
         let stdout_handle = tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -530,6 +680,14 @@ async fn execute_once(
                 } else {
                     println!("{}", line);
                 }
+
+                // Record output chunk
+                if let Some(exec_id) = exec_id_stdout {
+                    let _ = recorder_stdout
+                        .record_output_chunk(exec_id, OutputChunk::stdout(line.clone()))
+                        .await;
+                }
+
                 collected.push_str(&line);
                 collected.push('\n');
             }
@@ -538,6 +696,8 @@ async fn execute_once(
 
         let task_name = task.name.clone();
         let color = task_color(&task_name);
+        let recorder_stderr = recorder.clone();
+        let exec_id_stderr = task_exec_id;
         let stderr_handle = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
@@ -546,6 +706,13 @@ async fn execute_once(
                     eprintln!("  {} {}", format!("[{}]", task_name).color(color), line);
                 } else {
                     eprintln!("{}", line);
+                }
+
+                // Record stderr chunk
+                if let Some(exec_id) = exec_id_stderr {
+                    let _ = recorder_stderr
+                        .record_output_chunk(exec_id, OutputChunk::stderr(line))
+                        .await;
                 }
             }
         });
@@ -571,6 +738,7 @@ async fn execute_once(
 }
 
 /// Execute a task on a remote host via SSH
+#[allow(clippy::too_many_arguments)]
 async fn execute_remote(
     task: &Task,
     cmd: &str,
@@ -578,6 +746,8 @@ async fn execute_remote(
     ssh_config: &SshConfig,
     ssh_sessions: &SessionCache,
     service_env: &HashMap<String, String>,
+    recorder: &Arc<dyn Recorder>,
+    task_exec_id: Option<TaskExecutionId>,
 ) -> Result<String, ExecutorError> {
     let session = ssh::get_session(ssh_config, ssh_sessions)
         .await
@@ -597,12 +767,15 @@ async fn execute_remote(
             .map_err(|e| ExecutorError::Ssh(format!("upload failed: {}", e)))?;
     }
 
-    // prepend service env vars to remote command (ssh protocol env requests are
-    // typically rejected by servers unless AcceptEnv is configured in sshd_config)
-    let cmd_with_env = if service_env.is_empty() {
+    // merge @env vars with service env vars, then prepend as exports
+    // (ssh protocol env requests are typically rejected unless AcceptEnv is configured)
+    let mut all_env = ssh_config.env.clone();
+    all_env.extend(service_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+    let cmd_with_env = if all_env.is_empty() {
         cmd.to_string()
     } else {
-        let exports: Vec<String> = service_env
+        let exports: Vec<String> = all_env
             .iter()
             .map(|(k, v)| format!("export {}={}", k, escape(v.into())))
             .collect();
@@ -618,6 +791,15 @@ async fn execute_remote(
     )
     .await
     .map_err(|e| ExecutorError::Ssh(e.to_string()))?;
+
+    // Record SSH output (non-streaming for now)
+    if let Some(exec_id) = task_exec_id {
+        for line in result.stdout.lines() {
+            let _ = recorder
+                .record_output_chunk(exec_id, OutputChunk::stdout(line.to_string()))
+                .await;
+        }
+    }
 
     // download files after command execution (only on success)
     if result.success {

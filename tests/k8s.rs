@@ -143,6 +143,7 @@ hello:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("hello")
         .timeout(std::time::Duration::from_secs(120))
         .assert();
@@ -183,6 +184,7 @@ with_resources:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("with_resources")
         .timeout(std::time::Duration::from_secs(120))
         .assert();
@@ -224,6 +226,7 @@ read_config:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("read_config")
         .timeout(std::time::Duration::from_secs(120))
         .assert();
@@ -263,6 +266,7 @@ fail_job:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("fail_job")
         .timeout(std::time::Duration::from_secs(120))
         .assert();
@@ -309,6 +313,7 @@ exec_in_pod:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("exec_in_pod")
         .timeout(std::time::Duration::from_secs(60))
         .assert();
@@ -353,6 +358,7 @@ exec_named:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("exec_named")
         .timeout(std::time::Duration::from_secs(60))
         .assert();
@@ -402,6 +408,7 @@ upload_and_run:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("upload_and_run")
         .timeout(std::time::Duration::from_secs(60))
         .assert();
@@ -450,6 +457,7 @@ generate_and_download:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("generate_and_download")
         .timeout(std::time::Duration::from_secs(60))
         .assert();
@@ -510,6 +518,7 @@ apply_config:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("apply_config")
         .timeout(std::time::Duration::from_secs(60))
         .assert();
@@ -592,6 +601,7 @@ deploy_with_wait:
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("deploy_with_wait")
         .timeout(std::time::Duration::from_secs(180))
         .assert();
@@ -646,6 +656,7 @@ task("all-done", {{
         .arg("-c")
         .arg(&config_path)
         .arg("run")
+        .arg("--no-record")
         .arg("all-done")
         .timeout(std::time::Duration::from_secs(180))
         .assert();
@@ -697,6 +708,7 @@ local_finish: k8s_process
         .arg("-c")
         .arg(&config)
         .arg("run")
+        .arg("--no-record")
         .arg("local_finish")
         .timeout(std::time::Duration::from_secs(120))
         .assert();

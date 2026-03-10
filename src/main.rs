@@ -1,17 +1,21 @@
 mod dag;
 mod env;
 mod executor;
+mod history;
 mod justfile;
 mod k8s;
 mod lua;
 mod progress;
+mod recorder;
 mod service;
 mod ssh;
+mod tui;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
+use std::sync::Arc;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -20,6 +24,7 @@ use crate::dag::TaskGraph;
 use crate::executor::{Executor, TaskStatus};
 use crate::justfile::load_justflow;
 use crate::lua::load_lua_config;
+use crate::recorder::{NoOpRecorder, Recorder, SqliteRecorder};
 use dr_ast::{Config, Task};
 use serde::Serialize;
 
@@ -125,13 +130,21 @@ enum Commands {
         #[arg(long)]
         only: bool,
 
+        /// Disable run history recording
+        #[arg(long)]
+        no_record: bool,
+
         /// Positional arguments for task parameters
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
 
     /// Run all tasks in the graph
-    RunAll,
+    RunAll {
+        /// Disable run history recording
+        #[arg(long)]
+        no_record: bool,
+    },
 
     /// List all available tasks
     List {
@@ -154,6 +167,32 @@ enum Commands {
     /// Validate the config file
     Validate,
 
+    /// Browse run history in a TUI
+    Tui,
+
+    /// Query run history
+    History {
+        /// Number of recent runs to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+
+        /// Filter by task name
+        #[arg(short, long)]
+        task: Option<String>,
+
+        /// Output format: text or json
+        #[arg(short, long, default_value = "text")]
+        format: String,
+
+        /// Show details for a specific run ID
+        #[arg(long)]
+        run_id: Option<i64>,
+
+        /// Show only failed runs
+        #[arg(long)]
+        failed: bool,
+    },
+
     /// Run a task (implicit when task name is provided)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -165,7 +204,10 @@ async fn main() -> anyhow::Result<()> {
 
     setup_tracing(cli.verbose, cli.quiet);
 
-    let config_path = cli.config.unwrap_or_else(find_config_file);
+    let config_path = match cli.config {
+        Some(p) => p,
+        None => find_config_file()?,
+    };
     let config = load_config(&config_path)?;
 
     // load dotenv files if configured
@@ -176,18 +218,26 @@ async fn main() -> anyhow::Result<()> {
     let graph = TaskGraph::from_config(config)?;
 
     // determine what to run: explicit subcommand or implicit task name
-    let (task, only, args) = match cli.command {
-        Commands::Run { task, only, args } => (task, only, args),
+    let (task, only, no_record, args) = match cli.command {
+        Commands::Run {
+            task,
+            only,
+            no_record,
+            args,
+        } => (task, only, no_record, args),
         Commands::External(ext_args) => {
             // parse external args: first is task name, rest are args
-            // check for --only flag
+            // check for --only and --no-record flags
             let mut task_name = None;
             let mut only = false;
+            let mut no_record = false;
             let mut task_args = Vec::new();
 
             for arg in ext_args.iter() {
                 if arg == "--only" {
                     only = true;
+                } else if arg == "--no-record" {
+                    no_record = true;
                 } else if task_name.is_none() {
                     task_name = Some(arg);
                 } else {
@@ -201,16 +251,46 @@ async fn main() -> anyhow::Result<()> {
                 Cli::command().print_help()?;
                 return Ok(());
             };
-            (task.to_owned(), only, task_args)
+            (task.to_owned(), only, no_record, task_args)
         }
-        Commands::RunAll => {
-            let executor = Executor::new(graph);
+        Commands::RunAll { no_record } => {
+            let recorder: Arc<dyn Recorder> = if no_record {
+                Arc::new(NoOpRecorder)
+            } else {
+                match SqliteRecorder::open(None) {
+                    Ok(r) => Arc::new(r),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to open history database: {}", e);
+                        Arc::new(NoOpRecorder)
+                    }
+                }
+            };
+            let executor = Executor::new(graph, recorder);
             executor.register_services().await;
-            let results = executor.run_all().await?;
+            let config_path_str = config_path.to_string_lossy().to_string();
+            let results = executor.run_all(&config_path_str).await?;
             executor.close().await;
             print_results(&results);
             if results.iter().any(|r| r.status == TaskStatus::Failed) {
                 std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Tui => {
+            tui::run_tui().await?;
+            return Ok(());
+        }
+        Commands::History {
+            limit,
+            task,
+            format,
+            run_id,
+            failed,
+        } => {
+            if let Err(e) =
+                history::run_history(limit, task.as_deref(), failed, run_id, &format).await
+            {
+                anyhow::bail!("History error: {}", e);
             }
             return Ok(());
         }
@@ -273,9 +353,23 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let executor = Executor::new(graph);
+    // Create recorder based on --no-record flag
+    let recorder: Arc<dyn Recorder> = if no_record {
+        Arc::new(NoOpRecorder)
+    } else {
+        match SqliteRecorder::open(None) {
+            Ok(r) => Arc::new(r),
+            Err(e) => {
+                eprintln!("Warning: Failed to open history database: {}", e);
+                Arc::new(NoOpRecorder)
+            }
+        }
+    };
+
+    let executor = Executor::new(graph, recorder);
     executor.register_services().await;
 
+    let config_path_str = config_path.to_string_lossy().to_string();
     let results = if only {
         // run just this task (no deps)
         if let Some(t) = executor.graph.task(&task) {
@@ -286,7 +380,9 @@ async fn main() -> anyhow::Result<()> {
             anyhow::bail!("Task '{}' not found", task);
         }
     } else {
-        executor.run_task_with_args(&task, &args).await?
+        executor
+            .run_task_with_args(&task, &config_path_str, &args)
+            .await?
     };
 
     executor.close().await;
@@ -298,14 +394,26 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn find_config_file() -> PathBuf {
-    for name in ["dagfile", "dagfile.dr", "dagfile.lua"] {
-        let path = PathBuf::from(name);
-        if path.exists() {
-            return path;
+fn find_config_file() -> anyhow::Result<PathBuf> {
+    let names = ["dagfile", "dagfile.dr", "dagfile.lua", ".dagrun"];
+    let mut dir = std::env::current_dir()?;
+
+    loop {
+        for name in &names {
+            let path = dir.join(name);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+        if !dir.pop() {
+            break;
         }
     }
-    PathBuf::from("dagfile")
+
+    anyhow::bail!(
+        "no dagrun config file found (searched for {} in current directory and parents)",
+        names.join(", ")
+    );
 }
 
 fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
@@ -314,7 +422,7 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 
     match ext {
         "lua" => load_lua_config(path).map_err(|e| anyhow::anyhow!("{}", e)),
-        "dr" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
+        "dr" | "dagrun" => load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e)),
         _ if filename == "dagfile" || ext.is_empty() => {
             load_justflow(path).map_err(|e| anyhow::anyhow!("{}", e))
         }

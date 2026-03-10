@@ -130,6 +130,9 @@ pub struct SshConfig {
     pub workdir: Option<String>,
     pub upload: Vec<FileTransfer>,
     pub download: Vec<FileTransfer>,
+    /// Environment variables set via `@env KEY=VALUE`
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
 }
 
 impl SshConfig {

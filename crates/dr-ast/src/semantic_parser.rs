@@ -62,7 +62,8 @@ pub fn parse_config(source: &str) -> Result<Config, ParseConfigError> {
                 ctx.lua_blocks.push(lua.content.node.clone());
             }
             Item::SetDirective(set) => {
-                ctx.handle_set_directive(&set.key.node, &set.value.node);
+                let value = set.value.as_ref().map(|v| v.node.as_str());
+                ctx.handle_set_directive(&set.key.node, value);
             }
             Item::Variable(_) | Item::Comment(_) | Item::ContextBlock(_) => {}
         }
@@ -312,6 +313,13 @@ impl<'a> Context<'a> {
                         && let Ok(forward) = self.lower_port_forward(pf)
                     {
                         k.forwards.push(forward);
+                    }
+                }
+                AnnotationKind::Env(env_ann) => {
+                    let key = env_ann.key.node.clone();
+                    let value = self.substitute_variables(&env_ann.value.node);
+                    if let Some(ref mut s) = state.ssh {
+                        s.env.insert(key, value);
                     }
                 }
                 AnnotationKind::Use(_) | AnnotationKind::Unknown { .. } => {}
@@ -573,16 +581,20 @@ impl<'a> Context<'a> {
         })
     }
 
-    fn handle_set_directive(&mut self, key: &str, value: &str) {
+    fn handle_set_directive(&mut self, key: &str, value: Option<&str>) {
         match key {
-            "dotenv" => {
-                self.dotenv.load = value == "true" || value == "1";
+            "dotenv" | "dotenv-load" => {
+                let v = value.unwrap_or("true");
+                self.dotenv.load = v == "true" || v == "1";
             }
             "dotenv-path" => {
-                self.dotenv.paths.push(value.to_string());
+                if let Some(v) = value {
+                    self.dotenv.paths.push(v.to_string());
+                }
             }
             "dotenv-required" => {
-                self.dotenv.required = value == "true" || value == "1";
+                let v = value.unwrap_or("true");
+                self.dotenv.required = v == "true" || v == "1";
             }
             _ => {}
         }
@@ -832,5 +844,64 @@ simple:
         let task = config.tasks.get("simple").unwrap();
         assert!(task.ssh.is_none());
         assert!(task.timeout.is_none());
+    }
+
+    #[test]
+    fn test_bare_set_dotenv_load() {
+        let config = parse_config("set dotenv-load\ntask:\n\techo hi").unwrap();
+        assert!(config.dotenv.load);
+    }
+
+    #[test]
+    fn test_bare_set_dotenv_required() {
+        let config = parse_config("set dotenv-required\ntask:\n\techo hi").unwrap();
+        assert!(config.dotenv.required);
+    }
+
+    #[test]
+    fn test_env_annotation_on_ssh_task() {
+        let source = r#"
+@ssh host=server@10.0.0.1 workdir=/app
+@env TMPDIR=/tmp/build
+build:
+    make
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("build").unwrap();
+        assert!(task.ssh.is_some());
+        let ssh = task.ssh.as_ref().unwrap();
+        assert_eq!(ssh.env.get("TMPDIR"), Some(&"/tmp/build".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_env_annotations() {
+        let source = r#"
+@ssh host=server@10.0.0.1
+@env FOO=bar
+@env BAZ=qux
+task:
+    echo $FOO $BAZ
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("task").unwrap();
+        let ssh = task.ssh.as_ref().unwrap();
+        assert_eq!(ssh.env.get("FOO"), Some(&"bar".to_string()));
+        assert_eq!(ssh.env.get("BAZ"), Some(&"qux".to_string()));
+    }
+
+    #[test]
+    fn test_env_annotation_with_variable_interpolation() {
+        let source = r#"
+build_dir := /opt/build
+
+@ssh host=server@10.0.0.1
+@env TMPDIR={{build_dir}}/tmp
+task:
+    ls
+"#;
+        let config = parse_config(source).unwrap();
+        let task = config.tasks.get("task").unwrap();
+        let ssh = task.ssh.as_ref().unwrap();
+        assert_eq!(ssh.env.get("TMPDIR"), Some(&"/opt/build/tmp".to_string()));
     }
 }
